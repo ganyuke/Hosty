@@ -33,13 +33,11 @@ def show_preferences_window(parent: Gtk.Window, preferences: PreferencesManager,
 
     bg_row = Adw.SwitchRow(
         title="Run in background",
-        subtitle="Keep servers running when the window is closed",
     )
     bg_row.set_active(preferences.run_in_background_on_close)
     
     startup_row = Adw.SwitchRow(
-        title="Open on startup",
-        subtitle="Launch Hosty when logging in",
+        title="Open Hosty on startup",
     )
     startup_row.set_active(preferences.open_on_startup)
 
@@ -63,12 +61,12 @@ def show_preferences_window(parent: Gtk.Window, preferences: PreferencesManager,
         preferences.open_on_startup = active
         
         if active:
-            from hosty.shared.utils.portal import request_autostart
+            from hosty.shared.utils.portal import request_background
             def on_start_response(success, bg, auto, err):
                 if not success or not auto:
                     GLib.idle_add(row.set_active, False)
                     GLib.idle_add(preferences.__setattr__, "open_on_startup", False)
-            request_autostart(on_start_response)
+            request_background(True, on_start_response)
 
     startup_row.connect("notify::active", on_startup_toggled)
     

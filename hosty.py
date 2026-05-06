@@ -14,6 +14,8 @@ def main():
     try:
         app = create_application()
         return app.run(sys.argv)
+    except KeyboardInterrupt:
+        return 130
     except NotImplementedError as exc:
         print(f"Hosty startup error: {exc}", file=sys.stderr)
         return 2

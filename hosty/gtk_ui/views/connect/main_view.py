@@ -48,7 +48,6 @@ class ConnectView(Gtk.Box, LocalIpMixin, PlayersMixin, PlayitMixin):
         self._bedrock_in_progress = False
         self._local_ip_rows: list[Adw.ActionRow] = []
         self._local_ip_value = "Not available"
-        self._players_name_rows: list[Adw.EntryRow] = []
         self._whitelist_status_rows: list[Adw.ActionRow] = []
         self._whitelist_toggle_rows: list[Adw.SwitchRow] = []
         self._suppress_whitelist_toggle = False
