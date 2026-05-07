@@ -101,7 +101,10 @@ class HostyWindow(Adw.ApplicationWindow):
             self.set_visible(False)
             
             from hosty.shared.utils.portal import set_background_status
-            set_background_status("Hosty running")
+            if self._server_manager.get_running_server_id():
+                set_background_status("Server running")
+            else:
+                set_background_status("Server not running")
             
             if hasattr(self.get_application(), "_is_held_for_background"):
                 app = self.get_application()
@@ -165,6 +168,12 @@ class HostyWindow(Adw.ApplicationWindow):
         if running_id != self._last_running_server_id:
             previous_id = self._last_running_server_id
             self._last_running_server_id = running_id
+
+            from hosty.shared.utils.portal import set_background_status
+            if running_id:
+                set_background_status("Server running")
+            else:
+                set_background_status("Server not running")
 
             if running_id:
                 self._apply_playit_runtime(previous_id, running_id)

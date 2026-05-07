@@ -69,7 +69,7 @@
   <content_rating type="oars-1.1"/>
   <screenshots>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/07e1cdb0f6e94050144aa75f22a72e143734018f/packaging/linux/screenshots/connect.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/e2bf9946c862ca4bd0e98c10cd04439c4ad18b9d/packaging/linux/screenshots/connect.png</image>
       <caption xml:lang="en">Share local servers</caption>
     </screenshot>
     <screenshot type="default">
