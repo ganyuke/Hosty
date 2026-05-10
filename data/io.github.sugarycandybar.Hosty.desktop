@@ -1,0 +1,10 @@
+[Desktop Entry]
+Type=Application
+Name=Hosty
+Comment=Fabric Minecraft server manager
+Exec=hosty
+Icon=io.github.sugarycandybar.Hosty
+Terminal=false
+Categories=Utility;Game;
+Keywords=minecraft;server;fabric;modrinth;java;hosting;multiplayer;mc;
+StartupNotify=true
