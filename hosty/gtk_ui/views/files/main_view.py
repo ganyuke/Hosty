@@ -57,6 +57,9 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
         self._players_group: Optional[Adw.PreferencesGroup] = None
         self._world_rows: list[Gtk.Widget] = []
         self._mod_rows: list[Gtk.Widget] = []
+        self._datapack_rows: list[Gtk.Widget] = []
+        self._mods_expander: Optional[Adw.ExpanderRow] = None
+        self._datapacks_expander: Optional[Adw.ExpanderRow] = None
         self._worlds_snapshot: tuple[tuple[str, tuple[str, ...]], ...] = tuple()
 
         self._backups_group: Optional[Adw.PreferencesGroup] = None
@@ -126,13 +129,26 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
         self._mods_group.add(modrinth_row)
 
         check_updates_row = Adw.ActionRow(
-            title="Check for mod updates",
+            title="Check for updates",
         )
         check_updates_row.add_prefix(Gtk.Image.new_from_icon_name("software-update-available-symbolic"))
         check_updates_row.set_activatable(True)
         check_updates_row.connect("activated", self._on_check_mod_updates)
         self._mods_group.add(check_updates_row)
         self._check_updates_row = check_updates_row
+
+        # "Installed Mods" collapsible section (modpacks + standalone mods)
+        mods_expander = Adw.ExpanderRow(title="Installed Mods")
+        mods_expander.set_expanded(False)
+        self._mods_expander = mods_expander
+        self._mods_group.add(mods_expander)
+
+        # "Installed Datapacks" collapsible section
+        datapacks_expander = Adw.ExpanderRow(title="Installed Datapacks")
+        datapacks_expander.set_expanded(False)
+        self._datapacks_expander = datapacks_expander
+        self._mods_group.add(datapacks_expander)
+
         page.add(self._mods_group)
 
         self._players_group = Adw.PreferencesGroup(title="Players")
@@ -201,12 +217,34 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
         self._ensure_modpack_version_numbers_async()
 
         self._clear_group_rows(self._worlds_group, self._world_rows)
-        self._clear_group_rows(self._mods_group, self._mod_rows)
+
+        # Clear installed mods expander
+        if self._mods_expander:
+            for row in list(self._mod_rows):
+                try:
+                    self._mods_expander.remove(row)
+                except Exception:
+                    pass
+        self._mod_rows.clear()
+
+        # Clear installed datapacks expander
+        if self._datapacks_expander:
+            for row in list(self._datapack_rows):
+                try:
+                    self._datapacks_expander.remove(row)
+                except Exception:
+                    pass
+        self._datapack_rows.clear()
 
         root = self._server_dir()
         if not root or not root.is_dir():
             self._world_rows.append(self._add_info_row(self._worlds_group, "No server folder"))
-            self._mod_rows.append(self._add_info_row(self._mods_group, "No server folder"))
+            if self._mods_expander:
+                info = self._add_info_row_to_expander(self._mods_expander, "No server folder")
+                self._mod_rows.append(info)
+            if self._datapacks_expander:
+                info = self._add_info_row_to_expander(self._datapacks_expander, "No server folder")
+                self._datapack_rows.append(info)
             self._worlds_snapshot = tuple()
             return
 
@@ -219,31 +257,91 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
                 self._worlds_group.add(row)
                 self._world_rows.append(row)
 
+        # ---- Installed Mods expander ----
         mods_dir = root / "mods"
         mods_dir.mkdir(parents=True, exist_ok=True)
         jars = sorted(mods_dir.glob("*.jar"), key=lambda p: p.name.lower())
         entries = self._modpack_entries()
         managed_set = set(self._modpack_managed_mod_map().keys())
 
-        for project_id, entry in sorted(
-            entries.items(),
-            key=lambda item: (str(item[1].get("title", "")).strip() or item[0]).lower(),
-        ):
-            row = self._make_modpack_row(project_id, entry)
-            self._mods_group.add(row)
-            self._mod_rows.append(row)
+        if self._mods_expander:
+            for project_id, entry in sorted(
+                entries.items(),
+                key=lambda item: (str(item[1].get("title", "")).strip() or item[0]).lower(),
+            ):
+                row = self._make_modpack_row(project_id, entry)
+                self._mods_expander.add_row(row)
+                self._mod_rows.append(row)
 
-        standalone_jars = [jar for jar in jars if jar.name.lower() not in managed_set]
+            standalone_jars = [jar for jar in jars if jar.name.lower() not in managed_set]
 
-        if not standalone_jars and not entries:
-            self._mod_rows.append(self._add_info_row(self._mods_group, "No mods installed"))
-            self._worlds_snapshot = self._build_worlds_snapshot()
-            return
+            for jar in standalone_jars:
+                row = self._make_mod_row(jar)
+                self._mods_expander.add_row(row)
+                self._mod_rows.append(row)
 
-        for jar in standalone_jars:
-            row = self._make_mod_row(jar)
-            self._mods_group.add(row)
-            self._mod_rows.append(row)
+            if not self._mod_rows:
+                info = self._add_info_row_to_expander(self._mods_expander, "No mods installed")
+                self._mod_rows.append(info)
+
+            # Update expander subtitle with count
+            total_mods = len(entries) + len([j for j in jars if j.name.lower() not in managed_set])
+            self._mods_expander.set_subtitle(
+                f"{total_mods} item{'s' if total_mods != 1 else ''}" if total_mods else "None installed"
+            )
+
+        # ---- Installed Datapacks expander ----
+        if self._datapacks_expander:
+            dp_state = self._read_datapack_state().get("datapacks", {})
+            dp_dir = self._datapacks_dir()
+
+            for project_id, meta in sorted(
+                dp_state.items(),
+                key=lambda item: (str(item[1].get("title", "")).strip() or item[0]).lower(),
+            ):
+                row = self._make_datapack_row(project_id, meta)
+                self._datapacks_expander.add_row(row)
+                self._datapack_rows.append(row)
+
+            # Also scan datapacks dir for untracked zip files
+            tracked_filenames = {
+                str(m.get("filename", "")).strip().lower()
+                for m in dp_state.values()
+            }
+            if dp_dir and dp_dir.is_dir():
+                for dp_file in sorted(dp_dir.glob("*.zip"), key=lambda p: p.name.lower()):
+                    if dp_file.name.lower() in tracked_filenames:
+                        continue
+                    row = Adw.ActionRow(title=dp_file.name)
+                    row.set_subtitle(_format_size(dp_file.stat().st_size))
+                    row.set_activatable(False)
+                    del_btn = self._icon_button(
+                        "user-trash-symbolic",
+                        "Delete datapack file",
+                        lambda *_p, p=dp_file: self._soft_delete_with_undo(
+                            p, f"datapack \"{p.name}\"",
+                            on_refresh=self._rebuild_lists,
+                        ),
+                        destructive=True,
+                    )
+                    row.add_suffix(del_btn)
+                    self._datapacks_expander.add_row(row)
+                    self._datapack_rows.append(row)
+
+            if not self._datapack_rows:
+                info = self._add_info_row_to_expander(self._datapacks_expander, "No datapacks installed")
+                self._datapack_rows.append(info)
+
+            # Count real items (tracked + untracked files)
+            untracked_count = 0
+            if dp_dir and dp_dir.is_dir():
+                for dp_file in dp_dir.glob("*.zip"):
+                    if dp_file.name.lower() not in tracked_filenames:
+                        untracked_count += 1
+            real_count = len(dp_state) + untracked_count
+            self._datapacks_expander.set_subtitle(
+                f"{real_count} item{'s' if real_count != 1 else ''}" if real_count else "None installed"
+            )
 
         self._worlds_snapshot = self._build_worlds_snapshot()
 
@@ -285,6 +383,12 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
         row = Adw.ActionRow(title=title)
         row.set_activatable(False)
         group.add(row)
+        return row
+
+    def _add_info_row_to_expander(self, expander: Adw.ExpanderRow, title: str) -> Adw.ActionRow:
+        row = Adw.ActionRow(title=title)
+        row.set_activatable(False)
+        expander.add_row(row)
         return row
 
     def _icon_button(

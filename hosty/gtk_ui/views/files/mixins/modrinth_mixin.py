@@ -81,6 +81,7 @@ class ModrinthMixin:
         project_type_items = [
             ("Mods", "mod"),
             ("Modpacks", "modpack"),
+            ("Datapacks", "datapack"),
         ]
         type_dd = Gtk.DropDown.new_from_strings([x[0] for x in project_type_items])
         type_dd.set_valign(Gtk.Align.CENTER)
@@ -181,8 +182,11 @@ class ModrinthMixin:
             update_pager()
 
         def update_search_hint() -> None:
-            if selected_project_type() == "modpack":
+            ptype = selected_project_type()
+            if ptype == "modpack":
                 entry.set_placeholder_text("Search Fabric modpacks…")
+            elif ptype == "datapack":
+                entry.set_placeholder_text("Search datapacks…")
             else:
                 entry.set_placeholder_text("Search Fabric mods…")
 
@@ -243,7 +247,7 @@ class ModrinthMixin:
                         game_version=(mc_version if mc_version else None),
                         category=category,
                         loader="fabric",
-                        server_side_only=True,
+                        server_side_only=(project_type != "datapack"),
                         project_type=project_type,
                     )
                     GLib.idle_add(
@@ -354,7 +358,9 @@ class ModrinthMixin:
     def _make_modrinth_row(self, hit, mc_version: str, installed_names: set[str]) -> Gtk.ListBoxRow:
         from hosty.shared.backend import modrinth_client
 
-        is_modpack = str(getattr(hit, "project_type", "mod")).lower() == "modpack"
+        ptype = str(getattr(hit, "project_type", "mod")).lower()
+        is_modpack = ptype == "modpack"
+        is_datapack = ptype == "datapack"
 
         row = Gtk.ListBoxRow()
         row.set_activatable(False)
@@ -424,13 +430,22 @@ class ModrinthMixin:
         version_dd.set_hexpand(True)
         version_row.append(version_dd)
 
-        install_btn = Gtk.Button(label=("Install pack" if is_modpack else "Install"))
+        if is_modpack:
+            btn_label = "Install pack"
+        elif is_datapack:
+            btn_label = "Install datapack"
+        else:
+            btn_label = "Install"
+        install_btn = Gtk.Button(label=btn_label)
         install_btn.add_css_class("suggested-action")
         install_btn.set_halign(Gtk.Align.START)
         if is_modpack and self._is_modpack_installed(hit.project_id):
             install_btn.set_label("Installed")
             install_btn.set_sensitive(False)
-        elif (not is_modpack) and self._looks_installed(hit, installed_names):
+        elif is_datapack and self._is_datapack_installed(hit.project_id):
+            install_btn.set_label("Installed")
+            install_btn.set_sensitive(False)
+        elif (not is_modpack) and (not is_datapack) and self._looks_installed(hit, installed_names):
             install_btn.set_label("Installed")
             install_btn.set_sensitive(False)
         version_row.append(install_btn)
@@ -447,7 +462,12 @@ class ModrinthMixin:
 
         def on_open_page(*_):
             slug = hit.slug or hit.project_id
-            route = "modpack" if is_modpack else "mod"
+            if is_modpack:
+                route = "modpack"
+            elif is_datapack:
+                route = "datapack"
+            else:
+                route = "mod"
             if not _open_uri(f"https://modrinth.com/{route}/{slug}"):
                 self._alert("Could not open browser", "Unable to open the Modrinth page.")
 
@@ -463,7 +483,7 @@ class ModrinthMixin:
             if self._is_running():
                 self._alert("Server is running", "Stop the server before installing mods.")
                 return
-            if not mc_version:
+            if not mc_version and not is_datapack:
                 self._alert("Unknown version", "Could not read Minecraft version for this server.")
                 return
 
@@ -479,6 +499,44 @@ class ModrinthMixin:
 
             install_btn.set_label("Installing…")
             install_btn.set_sensitive(False)
+
+            if is_datapack:
+                def ui_ok_dp(fname: str):
+                    install_btn.set_label("Installed")
+                    install_btn.set_sensitive(False)
+                    self._record_datapack_install(
+                        hit.project_id,
+                        hit.title,
+                        chosen.version_id,
+                        chosen.filename,
+                    )
+                    self._toast(f"Installed datapack {fname}")
+                    self._end_mod_operation(op_token)
+                    self._rebuild_lists()
+
+                def ui_err_dp(msg: str):
+                    install_btn.set_label("Install datapack")
+                    install_btn.set_sensitive(True)
+                    self._end_mod_operation(op_token)
+                    self._alert("Install failed", msg)
+
+                def install_dp_thread():
+                    try:
+                        root = self._server_dir()
+                        if not root:
+                            raise RuntimeError("No server selected.")
+                        dp_dir = self._datapacks_dir()
+                        if not dp_dir:
+                            raise RuntimeError("Could not determine datapacks folder.")
+                        dp_dir.mkdir(parents=True, exist_ok=True)
+                        dest = dp_dir / chosen.filename
+                        modrinth_client.download_to(chosen.download_url, dest)
+                        GLib.idle_add(lambda f=chosen.filename: ui_ok_dp(f))
+                    except Exception as e:
+                        GLib.idle_add(lambda m=str(e): ui_err_dp(m))
+
+                threading.Thread(target=install_dp_thread, daemon=True).start()
+                return
 
             if is_modpack:
                 install_btn.set_label("Installing...")
@@ -671,14 +729,15 @@ class ModrinthMixin:
             threading.Thread(target=resolve_and_prompt, daemon=True).start()
 
         def load_versions():
-            if not mc_version:
+            if not mc_version and not is_datapack:
                 GLib.idle_add(lambda: version_dd.set_model(Gtk.StringList.new(["No server version"])))
                 return
             try:
+                loader_for_query = "datapack" if is_datapack else "fabric"
                 versions = modrinth_client.find_compatible_versions(
                     hit.project_id,
                     mc_version,
-                    loader="fabric",
+                    loader=loader_for_query,
                     limit=5,
                 )
                 if not versions:
@@ -714,7 +773,7 @@ class ModrinthMixin:
                 GLib.idle_add(ui_set_versions)
 
                 first = version_objs[0]
-                if (not is_modpack) and first.filename.lower() in installed_names:
+                if (not is_modpack) and (not is_datapack) and first.filename.lower() in installed_names:
                     dependents = self._dependency_dependents(first.filename)
                     if dependents:
                         GLib.idle_add(lambda: install_btn.set_label("Dependency"))

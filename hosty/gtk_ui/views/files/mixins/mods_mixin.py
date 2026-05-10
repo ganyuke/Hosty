@@ -73,6 +73,171 @@ class ModsMixin:
             return None
         return root / ".hosty-mod-installs.json"
 
+    def _datapack_state_path(self) -> Optional[Path]:
+        root = self._server_dir()
+        if not root:
+            return None
+        return root / ".hosty-datapack-installs.json"
+
+    def _datapacks_dir(self) -> Optional[Path]:
+        """Return the active datapacks directory (world/datapacks), creating parent if needed."""
+        root = self._server_dir()
+        if not root:
+            return None
+        # Try to find the active world folder from server.properties
+        world_name = "world"
+        props = root / "server.properties"
+        if props.exists():
+            try:
+                for line in props.read_text(encoding="utf-8", errors="replace").splitlines():
+                    stripped = line.strip()
+                    if stripped.startswith("level-name="):
+                        world_name = stripped[len("level-name="):].strip() or "world"
+                        break
+            except Exception:
+                pass
+        return root / world_name / "datapacks"
+
+    def _read_datapack_state(self) -> dict:
+        path = self._datapack_state_path()
+        if not path or not path.exists():
+            return {"datapacks": {}}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                raw = json.load(f)
+            if not isinstance(raw, dict):
+                return {"datapacks": {}}
+            dp_raw = raw.get("datapacks") if isinstance(raw.get("datapacks"), dict) else {}
+            cleaned: dict[str, dict[str, str]] = {}
+            for project_id, item in dp_raw.items():
+                pid = str(project_id).strip()
+                if not pid or not isinstance(item, dict):
+                    continue
+                title = str(item.get("title", "")).strip()
+                version_id = str(item.get("version_id", "")).strip()
+                filename = str(item.get("filename", "")).strip()
+                if not filename:
+                    continue
+                cleaned[pid] = {
+                    "title": title,
+                    "version_id": version_id,
+                    "filename": filename,
+                }
+            return {"datapacks": cleaned}
+        except Exception:
+            return {"datapacks": {}}
+
+    def _write_datapack_state(self, state: dict) -> bool:
+        path = self._datapack_state_path()
+        if not path:
+            return False
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+            return True
+        except Exception:
+            return False
+
+    def _record_datapack_install(
+        self,
+        project_id: str,
+        title: str,
+        version_id: str,
+        filename: str,
+    ) -> None:
+        pid = str(project_id).strip()
+        if not pid:
+            return
+        state = self._read_datapack_state()
+        dps = state.setdefault("datapacks", {})
+        dps[pid] = {
+            "title": str(title or "").strip(),
+            "version_id": str(version_id or "").strip(),
+            "filename": str(filename or "").strip(),
+        }
+        self._write_datapack_state(state)
+
+    def _is_datapack_installed(self, project_id: str) -> bool:
+        pid = str(project_id).strip()
+        if not pid:
+            return False
+        state = self._read_datapack_state()
+        return pid in state.get("datapacks", {})
+
+    def _make_datapack_row(self, project_id: str, meta: dict) -> "Adw.ActionRow":
+        title = str(meta.get("title", "")).strip() or project_id
+        filename = str(meta.get("filename", "")).strip()
+        version_id = str(meta.get("version_id", "")).strip()
+
+        row = Adw.ActionRow(title=title)
+        subtitle_bits = []
+        if filename:
+            dp_dir = self._datapacks_dir()
+            if dp_dir:
+                jar = dp_dir / filename
+                if jar.exists():
+                    subtitle_bits.append(_format_size(jar.stat().st_size))
+        if version_id:
+            subtitle_bits.append(f"version {version_id[:8]}")
+        row.set_subtitle(" · ".join(subtitle_bits) if subtitle_bits else "")
+        row.set_activatable(False)
+
+        open_btn = self._icon_button(
+            "web-browser-symbolic",
+            "Open datapack page",
+            lambda *_p, pid=project_id: _open_uri(f"https://modrinth.com/datapack/{pid}"),
+        )
+        delete_btn = self._icon_button(
+            "user-trash-symbolic",
+            "Delete datapack",
+            lambda *_p, pid=project_id, t=title, fn=filename: self._confirm_delete_datapack(pid, t, fn),
+            destructive=True,
+        )
+        row.add_suffix(open_btn)
+        row.add_suffix(delete_btn)
+        return row
+
+    def _confirm_delete_datapack(self, project_id: str, title: str, filename: str) -> None:
+        if self._is_running():
+            self._alert("Server is running", "Stop the server before deleting a datapack.")
+            return
+
+        dialog = Adw.AlertDialog()
+        dialog.set_heading("Delete datapack?")
+        dialog.set_body(f"Remove \"{title}\" from this server?")
+        dialog.add_response("cancel", "Cancel")
+        dialog.add_response("delete", "Delete")
+        dialog.set_response_appearance("delete", Adw.ResponseAppearance.DESTRUCTIVE)
+        dialog.set_default_response("cancel")
+        dialog.set_close_response("cancel")
+
+        def on_response(_d, response):
+            if response == "delete":
+                self._delete_datapack(project_id, title, filename)
+
+        dialog.connect("response", on_response)
+        dialog.present(self.get_root())
+
+    def _delete_datapack(self, project_id: str, title: str, filename: str) -> None:
+        dp_dir = self._datapacks_dir()
+        removed = False
+        if dp_dir and filename:
+            target = dp_dir / filename
+            if target.exists():
+                target.unlink(missing_ok=True)
+                removed = True
+
+        state = self._read_datapack_state()
+        dps = state.get("datapacks", {})
+        if isinstance(dps, dict):
+            dps.pop(project_id, None)
+            self._write_datapack_state({"datapacks": dps})
+
+        self._rebuild_lists()
+        suffix = " (file deleted)" if removed else ""
+        self._toast(f"Deleted {title}{suffix}")
+
     def _read_modpack_state(self) -> dict:
         path = self._modpack_state_path()
         if not path or not path.exists():
@@ -667,6 +832,7 @@ class ModsMixin:
             modpack_entries = self._modpack_entries()
             managed_mods = set(self._modpack_managed_mod_map().keys())
             individual_state = self._read_individual_mod_state().get("mods", {})
+            datapack_state = self._read_datapack_state().get("datapacks", {})
 
             modpack_updates = []
             for project_id, entry in modpack_entries.items():
@@ -712,15 +878,31 @@ class ModsMixin:
 
                 standalone_updates.append((project_id, meta, latest, deps))
 
+            # Check datapack updates (datapacks have no loader requirement)
+            datapack_updates = []
+            for project_id, meta in datapack_state.items():
+                current_version = str((meta or {}).get("version_id", "")).strip()
+                versions = modrinth_client.get_project_versions(project_id)
+                compatible = [v for v in versions if not mc_version or mc_version in (v.game_versions or [])]
+                if not compatible:
+                    # Fall back to any version
+                    compatible = versions
+                if not compatible:
+                    continue
+                latest = compatible[0]
+                if str(latest.version_id).strip() == current_version:
+                    continue
+                datapack_updates.append((project_id, meta, latest))
+
             def show_result():
-                total_updates = len(modpack_updates) + len(standalone_updates)
+                total_updates = len(modpack_updates) + len(standalone_updates) + len(datapack_updates)
                 if total_updates == 0:
                     self._mods_update_busy = False
                     self._set_mod_update_row_subtitle("Update check complete")
                     if blocked > 0:
                         self._toast(f"No safe updates found ({blocked} blocked by modpack-managed dependencies)")
                     else:
-                        self._toast("All tracked mods are up to date")
+                        self._toast("All tracked mods and datapacks are up to date")
                     return False
 
                 lines: list[str] = []
@@ -744,16 +926,35 @@ class ModsMixin:
                     if len(standalone_updates) > 14:
                         lines.append(f"- and {len(standalone_updates) - 14} more mods")
 
+                if datapack_updates:
+                    if lines:
+                        lines.append("")
+                    lines.append("Datapacks:")
+                    for pid, meta, newer in datapack_updates[:14]:
+                        title = str((meta or {}).get("title", "")).strip() or pid
+                        vn = str(newer.version_number or newer.version_id)
+                        lines.append(f"- {title} -> {vn}")
+                    if len(datapack_updates) > 14:
+                        lines.append(f"- and {len(datapack_updates) - 14} more datapacks")
+
                 listing = "\n".join(lines)
+
+                body_parts = []
+                if modpack_updates or standalone_updates:
+                    body_parts.append(
+                        f"Found {len(modpack_updates)} modpack update(s) and "
+                        f"{len(standalone_updates)} standalone mod update(s)."
+                    )
+                if datapack_updates:
+                    body_parts.append(f"Found {len(datapack_updates)} datapack update(s).")
+                if blocked > 0:
+                    body_parts.append(f"{blocked} standalone update(s) were skipped because dependencies are managed by a modpack.")
+                if listing:
+                    body_parts.append(listing)
 
                 dialog = Adw.AlertDialog()
                 dialog.set_heading("Install available updates?")
-                dialog.set_body(
-                    f"Found {len(modpack_updates)} modpack update(s) and "
-                    f"{len(standalone_updates)} standalone mod update(s)."
-                    + (f"\n\n{blocked} standalone update(s) were skipped because dependencies are managed by a modpack." if blocked else "")
-                    + (f"\n\n{listing}" if listing else "")
-                )
+                dialog.set_body("\n\n".join(body_parts))
                 dialog.add_response("cancel", "Cancel")
                 dialog.add_response("update", "Update")
                 dialog.set_response_appearance("update", Adw.ResponseAppearance.SUGGESTED)
@@ -775,11 +976,12 @@ class ModsMixin:
 
                     self._set_mod_update_row_subtitle("Updating mods...")
                     self._toast(
-                        f"Updating {len(modpack_updates)} modpack(s) and {len(standalone_updates)} mod(s)"
+                        f"Updating {len(modpack_updates)} modpack(s), {len(standalone_updates)} mod(s), "
+                        f"and {len(datapack_updates)} datapack(s)"
                     )
                     threading.Thread(
                         target=self._apply_mod_updates,
-                        args=(modpack_updates, standalone_updates, op_token),
+                        args=(modpack_updates, standalone_updates, op_token, datapack_updates),
                         daemon=True,
                     ).start()
 
@@ -791,11 +993,13 @@ class ModsMixin:
 
         threading.Thread(target=worker, daemon=True).start()
 
+
     def _apply_mod_updates(
         self,
         modpack_updates: list,
         standalone_updates: list,
         mod_operation_token: Optional[str] = None,
+        datapack_updates: Optional[list] = None,
     ) -> None:
         from hosty.shared.backend import modrinth_client
 
@@ -903,6 +1107,38 @@ class ModsMixin:
             except Exception:
                 failed += 1
 
+        # Apply datapack updates.
+        dp_updates = datapack_updates or []
+        dp_dir = self._datapacks_dir()
+        if dp_dir:
+            dp_dir.mkdir(parents=True, exist_ok=True)
+        for index, (project_id, meta, latest) in enumerate(dp_updates, start=1):
+            dp_title = str((meta or {}).get("title", "")).strip() or project_id
+            GLib.idle_add(
+                lambda i=index, total=len(dp_updates), t=dp_title: self._set_mod_update_row_subtitle(
+                    f"Updating datapack {i}/{total}: {t}"
+                )
+            )
+            try:
+                if not dp_dir:
+                    raise RuntimeError("No datapacks folder available.")
+                old_filename = str((meta or {}).get("filename", "")).strip()
+                dest = dp_dir / latest.filename
+                modrinth_client.download_to(latest.download_url, dest)
+                if old_filename and old_filename.lower() != latest.filename.lower():
+                    old_path = dp_dir / old_filename
+                    if old_path.exists():
+                        old_path.unlink(missing_ok=True)
+                self._record_datapack_install(
+                    project_id,
+                    dp_title,
+                    latest.version_id,
+                    latest.filename,
+                )
+                applied += 1
+            except Exception:
+                failed += 1
+
         def finish_ui():
             self._mods_update_busy = False
             self._set_mod_update_row_subtitle("Update check complete")
@@ -915,6 +1151,7 @@ class ModsMixin:
             return False
 
         GLib.idle_add(finish_ui)
+
 
     def _confirm_delete_mod(self, path: Path, name: str):
         if self._is_running():
