@@ -604,17 +604,19 @@ class PlayitMixin:
             dialog.present(self.get_root())
             return
 
-        # Check if Geyser mod is already installed
-        if self._has_mod_installed(server_dir, "geyser"):
-            # Mod is already installed, skip the warning and proceed directly
+        if (
+            self._has_mod_installed(server_dir, "geyser")
+            and self._has_mod_installed(server_dir, "floodgate")
+        ):
             start_operation()
         else:
-            # Mod not found, show the warning
-            self._confirm_mod_warning(
+            self._confirm_required_mod_install(
                 "Bedrock",
-                "Adding a Bedrock tunnel does not automatically add Bedrock support. Add the following mod to make it work: Geyser",
-                "https://modrinth.com/plugin/geyser",
-                start_operation
+                [
+                    ("geyser", "Geyser"),
+                    ("floodgate", "Floodgate"),
+                ],
+                start_operation,
             )
 
     def _on_manage_voicechat_tunnel(self, *_args):
@@ -667,8 +669,6 @@ class PlayitMixin:
                     self._voicechat_in_progress = False
                     if ok and endpoint:
                         self._save_server_config({"voicechat_endpoint": endpoint})
-                        # Auto-configure the mod
-                        self._server_manager.playit_manager.configure_voicechat_mod(server_dir, server_id)
                     self._refresh_status_row()
                     if ok:
                         self._toast(msg)
@@ -688,17 +688,13 @@ class PlayitMixin:
             dialog.present(self.get_root())
             return
 
-        # Check if Simple Voice Chat mod is already installed
         if self._has_mod_installed(server_dir, "voice-chat", "simple-voice-chat"):
-            # Mod is already installed, skip the warning and proceed directly
             start_operation()
         else:
-            # Mod not found, show the warning
-            self._confirm_mod_warning(
+            self._confirm_required_mod_install(
                 "Voice Chat",
-                "Adding a Voice Chat tunnel does not automatically add voice chat support. Add the following mod to make it work: Simple Voice Chat",
-                "https://modrinth.com/mod/simple-voice-chat",
-                start_operation
+                [("simple-voice-chat", "Simple Voice Chat")],
+                start_operation,
             )
 
     def _on_delete_java_tunnel(self, *_args):
@@ -870,32 +866,169 @@ class PlayitMixin:
         
         return False
 
-    def _confirm_mod_warning(self, tunnel_name: str, message: str, link: str, on_confirm):
+    def _exact_compatible_modrinth_version(self, project_id: str):
+        if not self._server_info:
+            return None
+        from hosty.shared.backend import modrinth_client
+
+        mc_version = str(self._server_info.mc_version or "").strip()
+        if not mc_version:
+            return None
+        versions = modrinth_client.get_project_versions(project_id)
+        for version in versions:
+            loaders = [str(loader).lower() for loader in (version.loaders or [])]
+            if mc_version in (version.game_versions or []) and "fabric" in loaders:
+                return version
+        return None
+
+    def _record_tunnel_installed_mod(self, project_id: str, title: str, version) -> None:
+        if not self._server_info:
+            return
+        state_path = self._server_info.server_dir / ".hosty-mod-installs.json"
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+            mods = data.get("mods") if isinstance(data.get("mods"), dict) else {}
+            mods[str(project_id)] = {
+                "title": str(title),
+                "version_id": str(version.version_id),
+                "version_number": str(version.version_number),
+                "filename": str(version.filename),
+            }
+            state_path.write_text(json.dumps({"mods": mods}, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _record_tunnel_dependency_installs(self, parent_filename: str, dep_versions: list) -> None:
+        if not self._server_info:
+            return
+        parent_key = str(parent_filename or "").strip().lower()
+        if not parent_key:
+            return
+        state_path = self._server_info.server_dir / ".hosty-mod-dependencies.json"
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+            req = data.get("required_by") if isinstance(data.get("required_by"), dict) else {}
+            for dep in dep_versions:
+                dep_key = str(getattr(dep, "filename", "") or "").strip().lower()
+                if not dep_key or dep_key == parent_key:
+                    continue
+                parents = set(req.get(dep_key, []))
+                parents.add(parent_key)
+                req[dep_key] = sorted(parents)
+            state_path.write_text(json.dumps({"required_by": req}, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _install_tunnel_mod(self, project_id: str, title: str) -> tuple[bool, str]:
+        if not self._server_info:
+            return False, "No server selected"
+        from hosty.shared.backend import modrinth_client
+
+        version = self._exact_compatible_modrinth_version(project_id)
+        if not version:
+            return False, f"{title} is not available for Minecraft {self._server_info.mc_version}"
+
+        mods_dir = self._server_info.server_dir / "mods"
+        mods_dir.mkdir(parents=True, exist_ok=True)
+        installed_names = {path.name.lower() for path in mods_dir.glob("*.jar")}
+
+        deps = modrinth_client.resolve_required_dependencies(
+            version.version_id,
+            self._server_info.mc_version,
+            "fabric",
+        )
+        for dep in deps:
+            dep_name = str(dep.filename).strip()
+            if not dep_name or dep_name.lower() in installed_names:
+                continue
+            if dep_name.lower() == str(version.filename).lower():
+                continue
+            modrinth_client.download_to(dep.download_url, mods_dir / dep_name)
+            installed_names.add(dep_name.lower())
+
+        if str(version.filename).lower() not in installed_names:
+            modrinth_client.download_to(version.download_url, mods_dir / version.filename)
+
+        self._record_tunnel_installed_mod(version.project_id or project_id, title, version)
+        self._record_tunnel_dependency_installs(version.filename, deps)
+
+        playit = self._server_manager.playit_manager
+        if project_id == "geyser":
+            playit.configure_geyser_mod(str(self._server_info.server_dir))
+        elif project_id == "floodgate":
+            playit.configure_floodgate_mod(str(self._server_info.server_dir))
+        elif project_id == "simple-voice-chat":
+            playit.configure_voicechat_mod(
+                str(self._server_info.server_dir),
+                self._server_info.id,
+                endpoint=str(self._cfg.get("voicechat_endpoint", "")).strip(),
+            )
+
+        return True, f"Installed {title}"
+
+    def _confirm_required_mod_install(self, tunnel_name: str, mods: list[tuple[str, str]], on_confirm):
         dialog = Adw.AlertDialog()
-        dialog.set_heading(f"Adding {tunnel_name} Tunnel")
-        dialog.set_body(message)
+        dialog.set_heading(f"Add {tunnel_name} tunnel?")
+        names = ", ".join(title for _project_id, title in mods)
+        dialog.set_body(f"This tunnel needs {names}. Hosty can install compatible Fabric versions automatically.")
         
         dialog.add_response("cancel", "Cancel")
-        dialog.add_response("get_mod", f"Get {tunnel_name} Mod")
-        dialog.add_response("continue", "Continue")
+        dialog.add_response("install", "Install Mods")
         
-        dialog.set_response_appearance("continue", Adw.ResponseAppearance.SUGGESTED)
-        dialog.set_default_response("continue")
+        dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+        dialog.set_default_response("install")
         dialog.set_close_response("cancel")
 
         def on_response(_dialog, response):
-            if response == "continue":
-                on_confirm()
-            elif response == "get_mod":
-                _open_uri(link)
-                # Still show the warning or just let them continue? 
-                # Usually better to stay in the dialog or re-open.
-                # Let's just stay open by re-presenting if they click get mod? 
-                # Actually, Adw.AlertDialog closes on any response.
-                # Re-presenting might be annoying. Let's just let them continue after clicking link?
-                # The requirement says "and give a link for either geyser or simple voice chat".
-                # I'll just re-present it so they can still click "Continue".
-                dialog.present(self.get_root())
+            if response != "install":
+                return
+
+            if tunnel_name == "Bedrock":
+                self._bedrock_in_progress = True
+            elif tunnel_name == "Voice Chat":
+                self._voicechat_in_progress = True
+            self._refresh_status_row()
+            self._toast(f"Installing {tunnel_name} mod support...")
+
+            def worker():
+                warnings: list[str] = []
+                installed: list[str] = []
+                for project_id, title in mods:
+                    if self._has_mod_installed(str(self._server_info.server_dir), project_id):
+                        continue
+                    try:
+                        ok, msg = self._install_tunnel_mod(project_id, title)
+                    except Exception as exc:
+                        ok, msg = False, f"Could not install {title}: {exc}"
+                    if ok:
+                        installed.append(title)
+                    else:
+                        warnings.append(msg)
+
+                def done():
+                    if tunnel_name == "Bedrock":
+                        self._bedrock_in_progress = False
+                    elif tunnel_name == "Voice Chat":
+                        self._voicechat_in_progress = False
+                    self._refresh_status_row()
+                    if installed:
+                        self._toast(f"Installed {', '.join(installed)}")
+                    if warnings:
+                        warn = Adw.AlertDialog()
+                        warn.set_heading("Some mods were not installed")
+                        warn.set_body("\n".join(warnings) + "\n\nHosty will create the tunnel anyway.")
+                        warn.add_response("ok", "OK")
+                        warn.set_default_response("ok")
+                        warn.set_close_response("ok")
+                        warn.connect("response", lambda *_: on_confirm())
+                        warn.present(self.get_root())
+                    else:
+                        on_confirm()
+                    return False
+
+                GLib.idle_add(done)
+
+            threading.Thread(target=worker, daemon=True).start()
 
         dialog.connect("response", on_response)
         dialog.present(self.get_root())
@@ -930,6 +1063,13 @@ class PlayitMixin:
 
         def run():
             ok, msg = worker()
+            if ok:
+                self._server_manager.playit_manager.verify_playit_mod_configs(
+                    server_dir,
+                    server_id,
+                    bedrock_endpoint=str(self._cfg.get("bedrock_endpoint", "")).strip(),
+                    voicechat_endpoint=str(self._cfg.get("voicechat_endpoint", "")).strip(),
+                )
 
             def ui_done():
                 self._start_in_progress = False
@@ -958,4 +1098,3 @@ class PlayitMixin:
             self._toast("Playit agent stopped")
         else:
             self._alert("Could not stop playit", msg)
-

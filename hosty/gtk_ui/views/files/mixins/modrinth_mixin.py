@@ -326,6 +326,33 @@ class ModrinthMixin:
             return True
         return False
 
+    def _configure_known_mod_after_download(self, hit) -> None:
+        if not self._server_manager or not self._server_info:
+            return
+        slug = str(getattr(hit, "slug", "") or "").strip().lower()
+        title = str(getattr(hit, "title", "") or "").strip().lower()
+        project_id = str(getattr(hit, "project_id", "") or "").strip().lower()
+        identifiers = {slug, title.replace(" ", "-"), project_id}
+        playit = self._server_manager.playit_manager
+        server_dir = str(self._server_info.server_dir)
+
+        if "geyser" in identifiers:
+            playit.configure_geyser_mod(server_dir)
+            return
+
+        if "floodgate" in identifiers:
+            playit.configure_floodgate_mod(server_dir)
+            return
+
+        if "simple-voice-chat" in identifiers or "voice-chat" in identifiers:
+            try:
+                from hosty.shared.backend.playit_config import load_playit_config
+                cfg = load_playit_config(self._server_info.server_dir)
+                endpoint = str(cfg.get("voicechat_endpoint", "")).strip()
+            except Exception:
+                endpoint = ""
+            playit.configure_voicechat_mod(server_dir, self._server_info.id, endpoint=endpoint)
+
     def _load_icon_async(self, image: Gtk.Image, url: str) -> None:
         def worker():
             try:
@@ -738,6 +765,7 @@ class ModrinthMixin:
                     dest = mods_dir / chosen.filename
                     modrinth_client.download_to(chosen.download_url, dest)
                     self._record_dependency_installs(chosen.filename, all_required_deps)
+                    self._configure_known_mod_after_download(hit)
                     GLib.idle_add(lambda f=chosen.filename, c=installed_dep_count: ui_ok(f, c))
                 except Exception as e:
                     GLib.idle_add(lambda m=str(e): ui_err(m))
@@ -876,4 +904,3 @@ class ModrinthMixin:
         install_btn.connect("clicked", on_install)
         threading.Thread(target=load_versions, daemon=True).start()
         return row
-

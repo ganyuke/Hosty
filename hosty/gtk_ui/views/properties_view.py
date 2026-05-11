@@ -21,6 +21,7 @@ from hosty.shared.utils.constants import (
     MIN_RAM_MB,
     MAX_RAM_MB,
     DEFAULT_RAM_MB,
+    get_required_java_version,
 )
 
 
@@ -371,6 +372,13 @@ class PropertiesView(Gtk.Box):
         )
         fabric_version_row.set_activatable(False)
         runtime_group.add(fabric_version_row)
+
+        java_info_row = Adw.ActionRow(
+            title="Java Runtime",
+            subtitle="Detecting...",
+        )
+        java_info_row.set_activatable(False)
+        runtime_group.add(java_info_row)
         
         runtime_page.add(runtime_group)
         stack.add_named(runtime_page, "runtime")
@@ -403,8 +411,37 @@ class PropertiesView(Gtk.Box):
         toolbar.set_content(stack)
         dialog.set_child(toolbar)
 
+        def update_java_info(mc_version: str) -> None:
+            if not mc_version or mc_version == "No versions found":
+                java_info_row.set_subtitle("Select a Minecraft version")
+                return
+            try:
+                java_ver = get_required_java_version(mc_version)
+            except Exception:
+                java_ver = 21
+            java_mgr = self._server_manager.java_manager
+            if java_mgr.is_java_available(java_ver):
+                java_info_row.set_subtitle(f"Java {java_ver} ✓ Available")
+            else:
+                system_ver = java_mgr.system_java_version
+                if system_ver and system_ver >= java_ver:
+                    java_info_row.set_subtitle(
+                        f"Java {java_ver} needed — system Java {system_ver} can be used"
+                    )
+                else:
+                    java_info_row.set_subtitle(
+                        f"Java {java_ver} needed — will be downloaded automatically"
+                    )
+
+        def selected_mc_version() -> str:
+            idx = int(mc_row.get_selected())
+            if idx < 0 or idx >= len(mc_values):
+                return ""
+            return mc_values[idx]
+
         def validate(*_args):
-            primary_btn.set_sensitive(bool(mc_values))
+            update_java_info(selected_mc_version())
+            primary_btn.set_sensitive(bool(mc_values) and bool(loader_values))
 
         mc_row.connect("notify::selected", validate)
 
@@ -478,7 +515,9 @@ class PropertiesView(Gtk.Box):
         def show_mod_review(*_args):
             if not mc_values or not loader_values:
                 return
-            selected_mc["value"] = mc_values[int(mc_row.get_selected())]
+            selected_mc["value"] = selected_mc_version()
+            if not selected_mc["value"]:
+                return
             # Use the automatically selected newest loader
             selected_loader["value"] = loader_values[0]
             primary_btn.set_sensitive(False)
@@ -562,6 +601,10 @@ class PropertiesView(Gtk.Box):
                     if ok:
                         self._server_info.mc_version = mc_version
                         self._server_info.loader_version = loader_version
+                        try:
+                            self._server_info.java_version = get_required_java_version(mc_version)
+                        except Exception:
+                            self._server_info.java_version = 21
                         self._version_row.set_subtitle(f"{mc_version} ({loader_version})")
                         self._refresh_upgrade_button()
                         self._show_toast(msg, timeout=4)

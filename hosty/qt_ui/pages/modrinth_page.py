@@ -37,6 +37,7 @@ from ..components import SmoothScrollArea
 from hosty.shared.backend.server_manager import ServerInfo, ServerManager
 from hosty.shared.backend import modrinth_client as modrinth
 from hosty.shared.core.events import dispatch_on_main_thread
+from hosty.shared.backend.playit_config import load_playit_config
 
 PAGE_SIZE = 10
 
@@ -511,6 +512,7 @@ class ModrinthPage(QWidget):
                                     modrinth.download_to(dep.download_url, mod_dir / dep.filename)
                                 except Exception:
                                     pass
+                        self._configure_known_mod_after_download(hit)
 
                     dispatch_on_main_thread(lambda: self._finish_install(hit.title, True, "", install_btn))
                 except Exception as e:
@@ -533,6 +535,28 @@ class ModrinthPage(QWidget):
             self._status_lbl.setText(f"✗ Failed to install '{name}': {msg}")
             btn.setText("Install")
             btn.setEnabled(True)
+
+    def _configure_known_mod_after_download(self, hit) -> None:
+        if not self._server_info or not self._server_manager:
+            return
+        slug = str(getattr(hit, "slug", "") or "").strip().lower()
+        title = str(getattr(hit, "title", "") or "").strip().lower()
+        project_id = str(getattr(hit, "project_id", "") or "").strip().lower()
+        identifiers = {slug, title.replace(" ", "-"), project_id}
+        playit = self._server_manager.playit_manager
+        server_dir = str(self._server_info.server_dir)
+
+        if "geyser" in identifiers:
+            playit.configure_geyser_mod(server_dir)
+        elif "floodgate" in identifiers:
+            playit.configure_floodgate_mod(server_dir)
+        elif "simple-voice-chat" in identifiers or "voice-chat" in identifiers:
+            cfg = load_playit_config(self._server_info.server_dir)
+            playit.configure_voicechat_mod(
+                server_dir,
+                self._server_info.id,
+                endpoint=str(cfg.get("voicechat_endpoint", "")).strip(),
+            )
 
         # Clear the status after a delay
         QTimer.singleShot(5000, lambda: (

@@ -39,6 +39,7 @@ from hosty.shared.utils.constants import (
     MAX_RAM_MB,
     MIN_RAM_MB,
     ServerStatus,
+    get_required_java_version,
 )
 
 
@@ -329,6 +330,21 @@ class PropertiesMixin:
         mc_row.addWidget(QLabel("Minecraft version"))
         mc_row.addWidget(mc_combo, 1)
         form_layout.addLayout(mc_row)
+
+        loader_value = QLabel("Loading...")
+        loader_value.setProperty("class", "dim")
+        loader_row = QHBoxLayout()
+        loader_row.addWidget(QLabel("Fabric loader"))
+        loader_row.addWidget(loader_value, 1)
+        form_layout.addLayout(loader_row)
+
+        java_value = QLabel("Detecting...")
+        java_value.setProperty("class", "dim")
+        java_row = QHBoxLayout()
+        java_row.addWidget(QLabel("Java runtime"))
+        java_row.addWidget(java_value, 1)
+        form_layout.addLayout(java_row)
+
         runtime_layout.addWidget(form)
         runtime_layout.addStretch()
         stack.addWidget(runtime_page)
@@ -371,8 +387,36 @@ class PropertiesMixin:
         selected_loader = {"value": ""}
         compatibility_plan: dict = {}
 
+        def selected_game_version() -> str:
+            idx = mc_combo.currentIndex()
+            if idx < 0 or idx >= len(game_versions):
+                return ""
+            return game_versions[idx]
+
+        def update_java_info() -> None:
+            mc_version = selected_game_version()
+            if not mc_version:
+                java_value.setText("Select a Minecraft version")
+                return
+            try:
+                required = get_required_java_version(mc_version)
+            except Exception:
+                required = 21
+            java_mgr = self._server_manager.java_manager
+            if java_mgr.is_java_available(required):
+                java_value.setText(f"Java {required} ✓ Available")
+            elif java_mgr.system_java_version and java_mgr.system_java_version >= required:
+                java_value.setText(
+                    f"Java {required} required — system Java {java_mgr.system_java_version} usable"
+                )
+            else:
+                java_value.setText(f"Java {required} — will be downloaded")
+
         def validate():
-            primary_btn.setEnabled(bool(game_versions))
+            update_java_info()
+            primary_btn.setEnabled(bool(game_versions) and bool(loader_versions))
+
+        mc_combo.currentIndexChanged.connect(lambda _idx: validate())
 
         def on_cancel():
             if stack.currentIndex() == 1:
@@ -436,6 +480,9 @@ class PropertiesMixin:
                 # Automatically use the newest loader (first in list)
                 if loader_versions:
                     selected_loader["value"] = loader_versions[0]
+                    loader_value.setText(loader_versions[0])
+                else:
+                    loader_value.setText("No loader versions found")
                 validate()
 
             dispatch_on_main_thread(done)
@@ -443,7 +490,9 @@ class PropertiesMixin:
         def show_review():
             if not game_versions or not loader_versions or not self._prop_server_info:
                 return
-            selected_mc["value"] = game_versions[mc_combo.currentIndex()]
+            selected_mc["value"] = selected_game_version()
+            if not selected_mc["value"]:
+                return
             # Use the automatically selected newest loader
             selected_loader["value"] = loader_versions[0] if loader_versions else ""
             primary_btn.setEnabled(False)
@@ -526,6 +575,10 @@ class PropertiesMixin:
                     if ok:
                         self._prop_server_info.mc_version = mc_version
                         self._prop_server_info.loader_version = loader_version
+                        try:
+                            self._prop_server_info.java_version = get_required_java_version(mc_version)
+                        except Exception:
+                            self._prop_server_info.java_version = 21
                         self._version_val.setText(f"{mc_version} ({loader_version})")
                         self._refresh_upgrade_button()
                         self._show_toast(msg)

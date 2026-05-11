@@ -38,6 +38,21 @@ SECRET_VALUE_RE = re.compile(r'(?mi)^\s*(?:secret|secret_key|key)\s*=\s*"([^"]+)
 VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 
 
+def _split_endpoint(endpoint: str) -> tuple[str, Optional[int]]:
+    text = str(endpoint or "").strip()
+    if not text:
+        return "", None
+    text = re.sub(r"^[a-z]+://", "", text, flags=re.IGNORECASE)
+    if ":" not in text:
+        return text, None
+    host, port_text = text.rsplit(":", 1)
+    try:
+        port = int(port_text)
+    except ValueError:
+        port = None
+    return host.strip(), port
+
+
 class PlayitManager(EventEmitter):
     """Manage a single playit tunnel subprocess."""
 
@@ -1335,7 +1350,178 @@ class PlayitManager(EventEmitter):
             tunnel_kind="voicechat",
         )
 
-    def configure_voicechat_mod(self, server_dir: str, server_id: str) -> bool:
+    def _replace_geyser_bedrock_block(self, content: str, port: int) -> str:
+        lines = content.splitlines()
+        out: list[str] = []
+        idx = 0
+        replaced = False
+
+        while idx < len(lines):
+            line = lines[idx]
+            if line.strip() != "bedrock:" or line.startswith((" ", "\t")):
+                out.append(line)
+                idx += 1
+                continue
+
+            out.append("bedrock:")
+            idx += 1
+            block: list[str] = []
+            while idx < len(lines):
+                child = lines[idx]
+                if child.strip() and not child.startswith((" ", "\t")):
+                    break
+                block.append(child)
+                idx += 1
+
+            seen_address = seen_port = seen_clone = False
+            for child in block:
+                stripped = child.strip()
+                if stripped.startswith("address:"):
+                    out.append("  address: 0.0.0.0")
+                    seen_address = True
+                elif stripped.startswith("port:"):
+                    out.append(f"  port: {port}")
+                    seen_port = True
+                elif stripped.startswith("clone-remote-port:"):
+                    out.append("  clone-remote-port: false")
+                    seen_clone = True
+                else:
+                    out.append(child)
+            if not seen_address:
+                out.append("  address: 0.0.0.0")
+            if not seen_port:
+                out.append(f"  port: {port}")
+            if not seen_clone:
+                out.append("  clone-remote-port: false")
+            replaced = True
+
+        if not replaced:
+            if out and out[-1].strip():
+                out.append("")
+            out.extend([
+                "bedrock:",
+                "  address: 0.0.0.0",
+                f"  port: {port}",
+                "  clone-remote-port: false",
+            ])
+
+        return "\n".join(out) + "\n"
+
+    def _replace_geyser_remote_auth_type(self, content: str, auth_type: str = "floodgate") -> str:
+        lines = content.splitlines()
+        out: list[str] = []
+        idx = 0
+        replaced = False
+
+        while idx < len(lines):
+            line = lines[idx]
+            if line.strip() != "remote:" or line.startswith((" ", "\t")):
+                out.append(line)
+                idx += 1
+                continue
+
+            out.append("remote:")
+            idx += 1
+            block: list[str] = []
+            while idx < len(lines):
+                child = lines[idx]
+                if child.strip() and not child.startswith((" ", "\t")):
+                    break
+                block.append(child)
+                idx += 1
+
+            seen_auth = False
+            for child in block:
+                stripped = child.strip()
+                if stripped.startswith("auth-type:"):
+                    out.append(f"  auth-type: {auth_type}")
+                    seen_auth = True
+                else:
+                    out.append(child)
+            if not seen_auth:
+                out.append(f"  auth-type: {auth_type}")
+            replaced = True
+
+        if not replaced:
+            if out and out[-1].strip():
+                out.append("")
+            out.extend([
+                "remote:",
+                f"  auth-type: {auth_type}",
+            ])
+
+        return "\n".join(out) + "\n"
+
+    def configure_geyser_mod(self, server_dir: str, bedrock_port: int = 19132) -> bool:
+        """Ensure Geyser's Fabric config listens on the Bedrock UDP port."""
+        try:
+            port = int(bedrock_port)
+        except Exception:
+            port = 19132
+        if port < 1024 or port > 65535:
+            port = 19132
+
+        config_dir = Path(server_dir) / "config" / "Geyser-Fabric"
+        config_file = config_dir / "config.yml"
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            content = config_file.read_text(encoding="utf-8") if config_file.exists() else ""
+            config_file.write_text(self._replace_geyser_bedrock_block(content, port), encoding="utf-8")
+            return True
+        except Exception:
+            return False
+
+    def configure_floodgate_mod(self, server_dir: str) -> bool:
+        """Ensure Geyser is configured to use Floodgate authentication."""
+        config_dir = Path(server_dir) / "config" / "Geyser-Fabric"
+        config_file = config_dir / "config.yml"
+        try:
+            config_dir.mkdir(parents=True, exist_ok=True)
+            content = config_file.read_text(encoding="utf-8") if config_file.exists() else ""
+            content = self._replace_geyser_remote_auth_type(content, "floodgate")
+            config_file.write_text(content, encoding="utf-8")
+            return True
+        except Exception:
+            return False
+
+    def _write_voicechat_toml_fallback(
+        self,
+        config_file: Path,
+        remote_port: int,
+        domain: str = "",
+    ) -> bool:
+        try:
+            lines = config_file.read_text(encoding="utf-8").splitlines() if config_file.exists() else []
+            replacements = {
+                "port": f"port = {remote_port}",
+                "bind_address": 'bind_address = "0.0.0.0"',
+            }
+            if domain:
+                replacements["voice_host"] = f'voice_host = "{domain}"'
+            seen: set[str] = set()
+            out: list[str] = []
+            for line in lines:
+                stripped = line.strip()
+                key = stripped.split("=", 1)[0].strip() if "=" in stripped else ""
+                if key in replacements and not stripped.startswith("#"):
+                    out.append(replacements[key])
+                    seen.add(key)
+                else:
+                    out.append(line)
+            for key, value in replacements.items():
+                if key not in seen:
+                    out.append(value)
+            config_file.write_text("\n".join(out) + "\n", encoding="utf-8")
+            return True
+        except Exception:
+            return False
+
+    def configure_voicechat_mod(
+        self,
+        server_dir: str,
+        server_id: str,
+        endpoint: str = "",
+    ) -> bool:
         """Auto-configure Simple Voice Chat mod to use the playit tunnel.
 
         1) Extract the assigned UDP address and port from the local Playit agent's status/API.
@@ -1343,39 +1529,40 @@ class PlayitManager(EventEmitter):
         3) Overwrite port, voice_host, and bind_address.
         4) Save the TOML file safely.
         """
-        if tomlkit is None:
-            # Fallback to the old properties method if tomlkit is missing
-            # but the user specifically asked for TOML, so we should probably fail or log.
-            return False
-
         # 1) Extract info
-        self._retrieve_tunnels()
+        domain, remote_port = _split_endpoint(endpoint)
         voice_tunnel = None
-        # The label used in _add_tunnel_for_protocol
-        label_prefix = f"hosty-{re.sub(r'[^a-zA-Z0-9-]', '-', server_id.lower())}-voicechat"
-        
-        for tunnel in self.tunnels.get("udp", []):
-            if tunnel.name.startswith(label_prefix):
-                voice_tunnel = tunnel
-                break
-        
-        if not voice_tunnel or not voice_tunnel.domain or not voice_tunnel.remote_port:
-            return False
+        if not domain or not remote_port:
+            self._retrieve_tunnels()
+            # The label used in _add_tunnel_for_protocol
+            label_prefix = f"hosty-{re.sub(r'[^a-zA-Z0-9-]', '-', server_id.lower())}-voicechat"
+            
+            for tunnel in self.tunnels.get("udp", []):
+                if tunnel.name.startswith(label_prefix):
+                    voice_tunnel = tunnel
+                    break
+            
+            if voice_tunnel and voice_tunnel.domain and voice_tunnel.remote_port:
+                domain = str(voice_tunnel.domain)
+                remote_port = int(voice_tunnel.remote_port)
+            else:
+                domain = ""
+                remote_port = 24454
 
-        domain = str(voice_tunnel.domain)
-        remote_port = int(voice_tunnel.remote_port)
-
-        # Update Playit to forward to the same port locally so the mod can bind to it
-        if voice_tunnel.port != remote_port:
+        # Update Playit to forward to the same port locally so the mod can bind to it.
+        if voice_tunnel and voice_tunnel.port != remote_port:
             if self._update_tunnel_local_port(voice_tunnel.id, remote_port):
                 voice_tunnel.port = remote_port
 
         # 2) Open TOML
         config_dir = Path(server_dir) / "config" / "voicechat"
         config_file = config_dir / "voicechat-server.toml"
+        config_dir.mkdir(parents=True, exist_ok=True)
+
+        if tomlkit is None:
+            return self._write_voicechat_toml_fallback(config_file, remote_port, domain)
         
         try:
-            config_dir.mkdir(parents=True, exist_ok=True)
             if config_file.exists():
                 content = config_file.read_text(encoding="utf-8")
                 doc = tomlkit.parse(content)
@@ -1393,7 +1580,8 @@ class PlayitManager(EventEmitter):
             target = doc
 
         target["port"] = remote_port
-        target["voice_host"] = domain
+        if domain:
+            target["voice_host"] = domain
         target["bind_address"] = "0.0.0.0"
 
         # 4) Save
@@ -1402,6 +1590,33 @@ class PlayitManager(EventEmitter):
             return True
         except Exception:
             return False
+
+    def verify_playit_mod_configs(
+        self,
+        server_dir: str,
+        server_id: str,
+        bedrock_endpoint: str = "",
+        voicechat_endpoint: str = "",
+    ) -> dict[str, bool]:
+        """Best-effort background repair for playit-backed mod config files."""
+        result = {"geyser": False, "voicechat": False}
+        if str(bedrock_endpoint or "").strip():
+            result["geyser"] = self.configure_geyser_mod(server_dir, 19132)
+            mods_dir = Path(server_dir) / "mods"
+            has_floodgate = False
+            try:
+                has_floodgate = any("floodgate" in jar.stem.lower() for jar in mods_dir.glob("*.jar"))
+            except Exception:
+                has_floodgate = False
+            if has_floodgate:
+                self.configure_floodgate_mod(server_dir)
+        if str(voicechat_endpoint or "").strip():
+            result["voicechat"] = self.configure_voicechat_mod(
+                server_dir,
+                server_id,
+                endpoint=voicechat_endpoint,
+            )
+        return result
 
     def stop(self) -> tuple[bool, str]:
         if not self.is_running:

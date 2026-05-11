@@ -243,12 +243,19 @@ class HostyWindow(Adw.ApplicationWindow):
         self._playit_starting_server_id = running_id
 
         def worker():
-            playit.start(
+            ok, _msg = playit.start(
                 running_id,
                 str(info.server_dir),
                 secret=str(cfg.get("secret", "")).strip(),
                 auto_install=bool(cfg.get("auto_install", True)),
             )
+            if ok:
+                playit.verify_playit_mod_configs(
+                    str(info.server_dir),
+                    running_id,
+                    bedrock_endpoint=str(cfg.get("bedrock_endpoint", "")).strip(),
+                    voicechat_endpoint=str(cfg.get("voicechat_endpoint", "")).strip(),
+                )
 
             def clear_starting_flag():
                 if self._playit_starting_server_id == running_id:

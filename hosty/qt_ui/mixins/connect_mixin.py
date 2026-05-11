@@ -463,6 +463,13 @@ class ConnectMixin:
                 secret=secret,
                 auto_install=True,
             )
+            if ok:
+                playit.verify_playit_mod_configs(
+                    str(self._connect_server_info.server_dir),
+                    sid,
+                    bedrock_endpoint=str(cfg.get("bedrock_endpoint", "")).strip(),
+                    voicechat_endpoint=str(cfg.get("voicechat_endpoint", "")).strip(),
+                )
 
             def done():
                 self._playit_starting = False

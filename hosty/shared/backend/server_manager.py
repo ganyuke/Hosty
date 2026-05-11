@@ -289,6 +289,13 @@ class ServerManager(EventEmitter):
         info.loader_version = loader_version
         info.java_version = java_req
         self._save()
+        existing_process = self._processes.get(server_id)
+        if existing_process:
+            existing_process.java_path = (
+                self.java_manager.get_java_path(java_req)
+                or self.java_manager.get_java_for_mc(mc_version)
+                or "java"
+            )
         self.emit_on_main_thread('server-changed', server_id)
         progress(1.0, "Server runtime updated")
 
@@ -385,6 +392,94 @@ class ServerManager(EventEmitter):
     def _tracked_datapack_state(self, root: Path) -> dict:
         data = self._json_file(root / ".hosty-datapack-installs.json")
         return data.get("datapacks") if isinstance(data.get("datapacks"), dict) else {}
+
+    def _tracked_mod_dependency_state(self, root: Path) -> dict[str, list[str]]:
+        data = self._json_file(root / ".hosty-mod-dependencies.json")
+        req = data.get("required_by") if isinstance(data.get("required_by"), dict) else {}
+        cleaned: dict[str, list[str]] = {}
+        for dep_name, parents in req.items():
+            dep_key = Path(str(dep_name or "")).name.casefold()
+            if not dep_key or not isinstance(parents, list):
+                continue
+            parent_keys = sorted(
+                {
+                    Path(str(parent or "")).name.casefold()
+                    for parent in parents
+                    if Path(str(parent or "")).name
+                }
+            )
+            if parent_keys:
+                cleaned[dep_key] = parent_keys
+        return cleaned
+
+    def _write_mod_dependency_state(self, root: Path, required_by: dict[str, list[str]]) -> None:
+        cleaned = {
+            Path(str(dep)).name.casefold(): sorted(
+                {
+                    Path(str(parent)).name.casefold()
+                    for parent in parents
+                    if Path(str(parent)).name
+                }
+            )
+            for dep, parents in required_by.items()
+            if Path(str(dep)).name and parents
+        }
+        cleaned = {dep: parents for dep, parents in cleaned.items() if parents}
+        self._write_json_file(root / ".hosty-mod-dependencies.json", {"required_by": cleaned})
+
+    def _replace_mod_dependency_parent(
+        self,
+        root: Path,
+        old_parent_filename: str,
+        new_parent_filename: str,
+        dep_versions: list,
+    ) -> tuple[set[str], set[str]]:
+        old_parent = Path(str(old_parent_filename or "")).name.casefold()
+        new_parent = Path(str(new_parent_filename or "")).name.casefold()
+        state = self._tracked_mod_dependency_state(root)
+        old_dep_names = {
+            dep_name
+            for dep_name, parents in state.items()
+            if old_parent and old_parent in parents
+        }
+
+        for dep_name, parents in list(state.items()):
+            filtered = [parent for parent in parents if parent != old_parent]
+            if filtered:
+                state[dep_name] = filtered
+            else:
+                state.pop(dep_name, None)
+
+        new_dep_names: set[str] = set()
+        if new_parent:
+            for dep in dep_versions:
+                dep_name = Path(str(getattr(dep, "filename", "") or "")).name.casefold()
+                if not dep_name or dep_name == new_parent:
+                    continue
+                new_dep_names.add(dep_name)
+                parents = set(state.get(dep_name, []))
+                parents.add(new_parent)
+                state[dep_name] = sorted(parents)
+
+        self._write_mod_dependency_state(root, state)
+        return old_dep_names, new_dep_names
+
+    def _remove_orphaned_dependency_files(self, root: Path, dependency_names: set[str]) -> None:
+        if not dependency_names:
+            return
+        mods_dir = root / "mods"
+        if not mods_dir.is_dir():
+            return
+        state = self._tracked_mod_dependency_state(root)
+        for dep_name in dependency_names:
+            if state.get(dep_name):
+                continue
+            dep_file = self._find_file_case_insensitive(mods_dir, dep_name)
+            if dep_file:
+                try:
+                    dep_file.unlink(missing_ok=True)
+                except Exception:
+                    pass
 
     def _version_entry(self, project_id: str, meta: dict, version) -> dict[str, str]:
         return {
@@ -601,11 +696,21 @@ class ServerManager(EventEmitter):
 
                 modrinth_client.download_to(download_url, mods_dir / filename)
                 old_filename = str(entry.get("current_filename", "")).strip()
+                old_dep_names, new_dep_names = self._replace_mod_dependency_parent(
+                    root,
+                    old_filename,
+                    filename,
+                    [
+                        dep for dep in deps
+                        if Path(str(dep.filename)).name.casefold() not in managed_mods
+                    ],
+                )
                 if old_filename and Path(old_filename).name.casefold() != filename.casefold():
                     old = self._find_file_case_insensitive(mods_dir, old_filename)
                     if old:
                         old.unlink(missing_ok=True)
                     self._remove_filename_from_tracked_mods(root, old_filename)
+                self._remove_orphaned_dependency_files(root, old_dep_names - new_dep_names)
                 mod_state[project_id] = {
                     "title": str(entry.get("title", "")),
                     "version_id": version_id,
