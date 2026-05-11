@@ -73,14 +73,9 @@ class BackupsMixin:
 
         actions = Adw.PreferencesGroup(title="Actions")
         create_row = Adw.ActionRow(
-            title="Create backup now",
-            subtitle="Back up world folders only",
+            title="Create world backup",
         )
         create_row.add_prefix(Gtk.Image.new_from_icon_name("document-save-symbolic"))
-        self._backup_spinner = Gtk.Spinner()
-        self._backup_spinner.set_spinning(False)
-        self._backup_spinner.set_visible(False)
-        create_row.add_suffix(self._backup_spinner)
         create_row.set_activatable(True)
         create_row.connect("activated", lambda *_: self._on_create_backup())
         actions.add(create_row)
@@ -88,12 +83,17 @@ class BackupsMixin:
 
         full_row = Adw.ActionRow(
             title="Create full backup",
-            subtitle="Back up the whole server folder, including mods and executables",
+            subtitle="Back up the entire server folder, including mods and executables",
         )
         full_row.add_prefix(Gtk.Image.new_from_icon_name("drive-harddisk-symbolic"))
+        self._full_backup_spinner = Gtk.Spinner()
+        self._full_backup_spinner.set_spinning(False)
+        self._full_backup_spinner.set_visible(False)
+        full_row.add_suffix(self._full_backup_spinner)
         full_row.set_activatable(True)
         full_row.connect("activated", lambda *_: self._on_create_full_backup())
         actions.add(full_row)
+        self._full_backup_row = full_row
 
         open_row = Adw.ActionRow(title="Open backups folder")
         open_row.add_prefix(Gtk.Image.new_from_icon_name("folder-open-symbolic"))
@@ -184,9 +184,6 @@ class BackupsMixin:
         stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
         zp = bdir / f"hosty-backup-{stamp}.zip"
         self._backup_busy = True
-        if self._backup_spinner:
-            self._backup_spinner.set_visible(True)
-            self._backup_spinner.start()
         if self._create_backup_row:
             self._create_backup_row.set_subtitle("Creating backup...")
 
@@ -206,9 +203,6 @@ class BackupsMixin:
 
                 def ui_ok():
                     self._backup_busy = False
-                    if self._backup_spinner:
-                        self._backup_spinner.stop()
-                        self._backup_spinner.set_visible(False)
                     if self._create_backup_row:
                         self._create_backup_row.set_subtitle("Back up world folders only")
                     self._refresh_backup_list()
@@ -220,9 +214,6 @@ class BackupsMixin:
 
                 def ui_err(msg: str = err_msg):
                     self._backup_busy = False
-                    if self._backup_spinner:
-                        self._backup_spinner.stop()
-                        self._backup_spinner.set_visible(False)
                     if self._create_backup_row:
                         self._create_backup_row.set_subtitle("Back up world folders only")
                     self._alert("Backup failed", msg)
@@ -243,11 +234,11 @@ class BackupsMixin:
             return
 
         self._backup_busy = True
-        if self._backup_spinner:
-            self._backup_spinner.set_visible(True)
-            self._backup_spinner.start()
-        if self._create_backup_row:
-            self._create_backup_row.set_subtitle("Creating full backup...")
+        if self._full_backup_spinner:
+            self._full_backup_spinner.set_visible(True)
+            self._full_backup_spinner.start()
+        if self._full_backup_row:
+            self._full_backup_row.set_subtitle("Creating full backup...")
 
         server_id = self._server_info.id
 
@@ -256,11 +247,11 @@ class BackupsMixin:
 
             def done():
                 self._backup_busy = False
-                if self._backup_spinner:
-                    self._backup_spinner.stop()
-                    self._backup_spinner.set_visible(False)
-                if self._create_backup_row:
-                    self._create_backup_row.set_subtitle("Back up world folders only")
+                if self._full_backup_spinner:
+                    self._full_backup_spinner.stop()
+                    self._full_backup_spinner.set_visible(False)
+                if self._full_backup_row:
+                    self._full_backup_row.set_subtitle("Back up the entire server folder, including mods and executables")
                 self._refresh_backup_list()
                 if ok:
                     self._toast(f"Saved {msg}")

@@ -206,7 +206,6 @@ class CreateServerDialog(Adw.Dialog):
 
         version_group = Adw.PreferencesGroup(
             title="Runtime",
-            description="Choose Minecraft and Fabric versions",
         )
 
         self._mc_version_list = Gtk.StringList.new(["Loading..."])
@@ -218,14 +217,12 @@ class CreateServerDialog(Adw.Dialog):
         self._mc_version_row.connect("notify::selected", self._on_mc_version_changed)
         version_group.add(self._mc_version_row)
 
-        self._loader_version_list = Gtk.StringList.new(["Loading..."])
-        self._loader_version_row = Adw.ComboRow(
+        self._fabric_version_row = Adw.ActionRow(
             title="Fabric loader",
-            model=self._loader_version_list,
+            subtitle="Loading...",
         )
-        self._loader_version_row.set_sensitive(False)
-        self._loader_version_row.connect("notify::selected", self._validate)
-        version_group.add(self._loader_version_row)
+        self._fabric_version_row.set_activatable(False)
+        version_group.add(self._fabric_version_row)
 
         self._java_info_row = Adw.ActionRow(
             title="Java Runtime",
@@ -238,7 +235,6 @@ class CreateServerDialog(Adw.Dialog):
 
         resources_group = Adw.PreferencesGroup(
             title="Resources",
-            description="Server resource allocation",
         )
 
         ram_adj = Gtk.Adjustment(
@@ -322,10 +318,8 @@ class CreateServerDialog(Adw.Dialog):
             self._on_mc_version_changed(self._mc_version_row, None)
 
         if self._loader_versions:
-            loader_list = Gtk.StringList.new(self._loader_versions)
-            self._loader_version_row.set_model(loader_list)
-            self._loader_version_row.set_sensitive(True)
-            self._loader_version_row.set_selected(0)
+            # Show the newest loader version (first in list) as read-only
+            self._fabric_version_row.set_subtitle(self._loader_versions[0])
 
         self._validate()
     
@@ -436,7 +430,6 @@ class CreateServerDialog(Adw.Dialog):
         """Validate current step and update primary action state."""
         name = self._name_entry.get_text().strip()
         has_versions = len(self._game_versions) > 0
-        has_loaders = len(self._loader_versions) > 0
         page = self._stack.get_visible_child_name()
 
         if page == "details":
@@ -450,7 +443,7 @@ class CreateServerDialog(Adw.Dialog):
             self._cancel_btn.set_label("Back")
             self._cancel_btn.set_sensitive(True)
             self._create_btn.set_label("Create")
-            self._create_btn.set_sensitive(bool(name) and has_versions and has_loaders)
+            self._create_btn.set_sensitive(bool(name) and has_versions)
             return
 
         self._cancel_btn.set_label("Cancel")
@@ -474,9 +467,9 @@ class CreateServerDialog(Adw.Dialog):
 
         name = self._name_entry.get_text().strip()
         mc_idx = self._mc_version_row.get_selected()
-        loader_idx = self._loader_version_row.get_selected()
         mc_version = self._game_versions[mc_idx] if mc_idx < len(self._game_versions) else ""
-        loader_version = self._loader_versions[loader_idx] if loader_idx < len(self._loader_versions) else ""
+        # Use the newest loader version (first in the list)
+        loader_version = self._loader_versions[0] if self._loader_versions else ""
         ram_mb = int(self._ram_row.get_value())
         seed = self._seed_entry.get_text().strip()
         difficulty_idx = self._difficulty_row.get_selected()

@@ -337,9 +337,9 @@ class PropertiesView(Gtk.Box):
             return
 
         dialog = Adw.Dialog()
-        dialog.set_title("Change Version")
-        dialog.set_content_width(560)
-        dialog.set_content_height(520)
+        dialog.set_title("Update Version")
+        dialog.set_content_width(520)
+        dialog.set_content_height(420)
 
         toolbar = Adw.ToolbarView()
         header = Adw.HeaderBar()
@@ -359,14 +359,19 @@ class PropertiesView(Gtk.Box):
         runtime_page = Adw.PreferencesPage()
         runtime_group = Adw.PreferencesGroup(
             title="Runtime",
-            description="Choose the target Minecraft version and Fabric loader.",
         )
         mc_values: list[str] = []
         loader_values: list[str] = []
         mc_row = Adw.ComboRow(title="Minecraft version", model=Gtk.StringList.new(["Loading..."]))
-        loader_row = Adw.ComboRow(title="Fabric loader", model=Gtk.StringList.new(["Loading..."]))
         runtime_group.add(mc_row)
-        runtime_group.add(loader_row)
+        
+        fabric_version_row = Adw.ActionRow(
+            title="Fabric loader",
+            subtitle="Loading...",
+        )
+        fabric_version_row.set_activatable(False)
+        runtime_group.add(fabric_version_row)
+        
         runtime_page.add(runtime_group)
         stack.add_named(runtime_page, "runtime")
 
@@ -399,10 +404,9 @@ class PropertiesView(Gtk.Box):
         dialog.set_child(toolbar)
 
         def validate(*_args):
-            primary_btn.set_sensitive(bool(mc_values) and bool(loader_values))
+            primary_btn.set_sensitive(bool(mc_values))
 
         mc_row.connect("notify::selected", validate)
-        loader_row.connect("notify::selected", validate)
 
         def on_cancel(*_args):
             visible = stack.get_visible_child_name()
@@ -460,13 +464,12 @@ class PropertiesView(Gtk.Box):
                 loader_values.clear()
                 loader_values.extend(next_loaders)
                 mc_row.set_model(Gtk.StringList.new(mc_values or ["No versions found"]))
-                loader_row.set_model(Gtk.StringList.new(loader_values or ["No loaders found"]))
                 if mc_values:
                     mc_row.set_selected(0)
-                if current_loader in loader_values:
-                    loader_row.set_selected(loader_values.index(current_loader))
-                elif loader_values:
-                    loader_row.set_selected(0)
+                # Automatically use the newest loader (first in list)
+                if loader_values:
+                    selected_loader["value"] = loader_values[0]
+                    fabric_version_row.set_subtitle(loader_values[0])
                 validate()
                 return False
 
@@ -476,7 +479,8 @@ class PropertiesView(Gtk.Box):
             if not mc_values or not loader_values:
                 return
             selected_mc["value"] = mc_values[int(mc_row.get_selected())]
-            selected_loader["value"] = loader_values[int(loader_row.get_selected())]
+            # Use the automatically selected newest loader
+            selected_loader["value"] = loader_values[0]
             primary_btn.set_sensitive(False)
             primary_btn.set_label("Update")
             cancel_btn.set_label("Back")

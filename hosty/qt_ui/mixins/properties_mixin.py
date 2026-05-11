@@ -295,7 +295,7 @@ class PropertiesMixin:
             return
 
         dialog = QDialog(self)
-        dialog.setWindowTitle("Change Version")
+        dialog.setWindowTitle("Update Version")
         dialog.setMinimumSize(560, 520)
         root = QVBoxLayout(dialog)
         root.setSpacing(12)
@@ -322,21 +322,13 @@ class PropertiesMixin:
         form = QGroupBox("Runtime")
         form_layout = QVBoxLayout(form)
         mc_combo = QComboBox()
-        loader_combo = QComboBox()
         mc_combo.addItem("Loading...")
-        loader_combo.addItem("Loading...")
         mc_combo.setEnabled(False)
-        loader_combo.setEnabled(False)
 
         mc_row = QHBoxLayout()
         mc_row.addWidget(QLabel("Minecraft version"))
         mc_row.addWidget(mc_combo, 1)
         form_layout.addLayout(mc_row)
-
-        loader_row = QHBoxLayout()
-        loader_row.addWidget(QLabel("Fabric loader"))
-        loader_row.addWidget(loader_combo, 1)
-        form_layout.addLayout(loader_row)
         runtime_layout.addWidget(form)
         runtime_layout.addStretch()
         stack.addWidget(runtime_page)
@@ -380,7 +372,7 @@ class PropertiesMixin:
         compatibility_plan: dict = {}
 
         def validate():
-            primary_btn.setEnabled(bool(game_versions) and bool(loader_versions))
+            primary_btn.setEnabled(bool(game_versions))
 
         def on_cancel():
             if stack.currentIndex() == 1:
@@ -439,13 +431,11 @@ class PropertiesMixin:
                 loader_versions.clear()
                 loader_versions.extend(next_loaders)
                 mc_combo.clear()
-                loader_combo.clear()
                 mc_combo.addItems(game_versions or ["No versions found"])
-                loader_combo.addItems(loader_versions or ["No loaders found"])
                 mc_combo.setEnabled(bool(game_versions))
-                loader_combo.setEnabled(bool(loader_versions))
-                if current_loader in loader_versions:
-                    loader_combo.setCurrentIndex(loader_versions.index(current_loader))
+                # Automatically use the newest loader (first in list)
+                if loader_versions:
+                    selected_loader["value"] = loader_versions[0]
                 validate()
 
             dispatch_on_main_thread(done)
@@ -454,7 +444,8 @@ class PropertiesMixin:
             if not game_versions or not loader_versions or not self._prop_server_info:
                 return
             selected_mc["value"] = game_versions[mc_combo.currentIndex()]
-            selected_loader["value"] = loader_versions[loader_combo.currentIndex()]
+            # Use the automatically selected newest loader
+            selected_loader["value"] = loader_versions[0] if loader_versions else ""
             primary_btn.setEnabled(False)
             primary_btn.setText("Update")
             cancel_btn.setText("Back")
