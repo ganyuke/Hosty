@@ -144,6 +144,13 @@ class PlayitMixin:
             self._voicechat_tunnel_action_btn.remove_css_class("pill")
             self._voicechat_tunnel_action_btn.add_css_class("flat")
             self._voicechat_tunnel_action_btn.set_sensitive(False)
+            # Hide spinners on initial state
+            self._java_tunnel_spinner.set_visible(False)
+            self._java_tunnel_spinner.set_spinning(False)
+            self._bedrock_tunnel_spinner.set_visible(False)
+            self._bedrock_tunnel_spinner.set_spinning(False)
+            self._voicechat_tunnel_spinner.set_visible(False)
+            self._voicechat_tunnel_spinner.set_spinning(False)
             self._tunnel_btn.set_label("Start Agent")
             self._tunnel_btn.remove_css_class("destructive-action")
             self._tunnel_btn.add_css_class("suggested-action")
@@ -217,6 +224,16 @@ class PlayitMixin:
             self._java_tunnel_action_btn.set_tooltip_text("Add Java tunnel")
             self._java_tunnel_action_btn.remove_css_class("flat")
             self._java_tunnel_action_btn.add_css_class("flat")
+        
+        # Show spinner when in progress, button otherwise
+        if self._java_tunnel_in_progress:
+            self._java_tunnel_action_btn.set_visible(False)
+            self._java_tunnel_spinner.set_visible(True)
+            self._java_tunnel_spinner.set_spinning(True)
+        else:
+            self._java_tunnel_action_btn.set_visible(True)
+            self._java_tunnel_spinner.set_visible(False)
+            self._java_tunnel_spinner.set_spinning(False)
 
         if bedrock_endpoint:
             self._bedrock_tunnel_action_btn.set_label("")
@@ -230,6 +247,16 @@ class PlayitMixin:
             self._bedrock_tunnel_action_btn.set_tooltip_text("Add Bedrock tunnel")
             self._bedrock_tunnel_action_btn.remove_css_class("flat")
             self._bedrock_tunnel_action_btn.add_css_class("flat")
+        
+        # Show spinner when in progress, button otherwise
+        if self._bedrock_in_progress:
+            self._bedrock_tunnel_action_btn.set_visible(False)
+            self._bedrock_tunnel_spinner.set_visible(True)
+            self._bedrock_tunnel_spinner.set_spinning(True)
+        else:
+            self._bedrock_tunnel_action_btn.set_visible(True)
+            self._bedrock_tunnel_spinner.set_visible(False)
+            self._bedrock_tunnel_spinner.set_spinning(False)
 
         voicechat_endpoint = str(self._cfg.get("voicechat_endpoint", "")).strip()
         if voicechat_endpoint:
@@ -255,6 +282,16 @@ class PlayitMixin:
             self._voicechat_tunnel_action_btn.set_tooltip_text("Add Voice Chat tunnel")
             self._voicechat_tunnel_action_btn.remove_css_class("flat")
             self._voicechat_tunnel_action_btn.add_css_class("flat")
+        
+        # Show spinner when in progress, button otherwise
+        if self._voicechat_in_progress:
+            self._voicechat_tunnel_action_btn.set_visible(False)
+            self._voicechat_tunnel_spinner.set_visible(True)
+            self._voicechat_tunnel_spinner.set_spinning(True)
+        else:
+            self._voicechat_tunnel_action_btn.set_visible(True)
+            self._voicechat_tunnel_spinner.set_visible(False)
+            self._voicechat_tunnel_spinner.set_spinning(False)
 
         tunnel_actions_locked = bool(
             playit.is_running
@@ -567,12 +604,18 @@ class PlayitMixin:
             dialog.present(self.get_root())
             return
 
-        self._confirm_mod_warning(
-            "Bedrock",
-            "Adding a Bedrock tunnel does not automatically add Bedrock support. Add the following mod to make it work: Geyser",
-            "https://modrinth.com/plugin/geyser",
-            start_operation
-        )
+        # Check if Geyser mod is already installed
+        if self._has_mod_installed(server_dir, "geyser"):
+            # Mod is already installed, skip the warning and proceed directly
+            start_operation()
+        else:
+            # Mod not found, show the warning
+            self._confirm_mod_warning(
+                "Bedrock",
+                "Adding a Bedrock tunnel does not automatically add Bedrock support. Add the following mod to make it work: Geyser",
+                "https://modrinth.com/plugin/geyser",
+                start_operation
+            )
 
     def _on_manage_voicechat_tunnel(self, *_args):
         if not self._server_manager or not self._server_info:
@@ -645,12 +688,18 @@ class PlayitMixin:
             dialog.present(self.get_root())
             return
 
-        self._confirm_mod_warning(
-            "Voice Chat",
-            "Adding a Voice Chat tunnel does not automatically add voice chat support. Add the following mod to make it work: Simple Voice Chat",
-            "https://modrinth.com/mod/simple-voice-chat",
-            start_operation
-        )
+        # Check if Simple Voice Chat mod is already installed
+        if self._has_mod_installed(server_dir, "voice-chat", "simple-voice-chat"):
+            # Mod is already installed, skip the warning and proceed directly
+            start_operation()
+        else:
+            # Mod not found, show the warning
+            self._confirm_mod_warning(
+                "Voice Chat",
+                "Adding a Voice Chat tunnel does not automatically add voice chat support. Add the following mod to make it work: Simple Voice Chat",
+                "https://modrinth.com/mod/simple-voice-chat",
+                start_operation
+            )
 
     def _on_delete_java_tunnel(self, *_args):
         if not self._server_manager or not self._server_info:
@@ -786,6 +835,40 @@ class PlayitMixin:
             threading.Thread(target=run, daemon=True).start()
 
         self._confirm_delete_tunnel("Voice Chat", confirmed_delete)
+
+    def _has_mod_installed(self, server_dir: str, *mod_patterns: str) -> bool:
+        """Check if any of the given mod patterns are installed in the server.
+        
+        Args:
+            server_dir: The server directory path
+            *mod_patterns: One or more mod name patterns to search for (case-insensitive, no extension)
+        
+        Returns:
+            True if any mod matching the patterns is found, False otherwise
+        """
+        mods_dir = Path(server_dir) / "mods"
+        if not mods_dir.exists():
+            return False
+        
+        # Get all jar files in mods directory
+        installed_mods = {f.stem.lower() for f in mods_dir.glob("*.jar")}
+        
+        # Check if any of the patterns match an installed mod
+        for pattern in mod_patterns:
+            pattern_lower = pattern.lower()
+            # Normalize pattern: remove hyphens for matching
+            pattern_normalized = pattern_lower.replace("-", "")
+            
+            for mod_name in installed_mods:
+                # Check if pattern is in mod name or mod name starts with pattern
+                if pattern_lower in mod_name or mod_name.startswith(pattern_lower):
+                    return True
+                # Also check normalized version (e.g., "voicechat" matches "voice-chat")
+                mod_normalized = mod_name.replace("-", "")
+                if pattern_normalized in mod_normalized or mod_normalized.startswith(pattern_normalized):
+                    return True
+        
+        return False
 
     def _confirm_mod_warning(self, tunnel_name: str, message: str, link: str, on_confirm):
         dialog = Adw.AlertDialog()

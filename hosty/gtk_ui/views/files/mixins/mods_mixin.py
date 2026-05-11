@@ -676,6 +676,47 @@ class ModsMixin:
         installed = {p.name.lower() for p in mods_dir.glob("*.jar")} if mods_dir.is_dir() else set()
         return [p for p in parents if p in installed]
 
+    def _cleanup_orphaned_dependencies(self, removed_mod_filename: str) -> None:
+        """Remove dependency files that are no longer needed after a mod is deleted."""
+        removed_key = str(removed_mod_filename).strip().lower()
+        if not removed_key:
+            return
+
+        root = self._server_dir()
+        if not root:
+            return
+
+        mods_dir = root / "mods"
+        if not mods_dir.is_dir():
+            return
+
+        state = self._read_mod_dependency_state()
+        req = state.get("required_by", {})
+
+        # Collect all dependencies that need to be checked
+        deps_to_check = []
+        
+        # Find dependencies that this mod required
+        for dep_key, parents in req.items():
+            if removed_key not in parents:
+                continue
+            deps_to_check.append(dep_key)
+
+        # Now check each dependency to see if it's still needed by other mods
+        for dep_key in deps_to_check:
+            parents = req.get(dep_key, [])
+            # Remove the old parent from the parents list
+            remaining_parents = [p for p in parents if p != removed_key]
+
+            if not remaining_parents:
+                # This dependency is now orphaned, try to remove it
+                try:
+                    dep_path = self._find_mod_jar_path(mods_dir, dep_key)
+                    if dep_path and dep_path.exists():
+                        dep_path.unlink(missing_ok=True)
+                except Exception:
+                    pass
+
     def _make_mod_row(self, jar: Path) -> Adw.ActionRow:
         # Try to find metadata for this jar
         filename_lower = jar.name.lower()
@@ -1175,21 +1216,50 @@ class ModsMixin:
                 )
             )
             try:
+                old_name = str((meta or {}).get("filename", "")).strip()
                 deps_to_install = [
                     dep
                     for dep in deps
                     if str(dep.filename).strip().lower() not in managed_mods
                 ]
+                
+                # Get old dependencies from state before updating
+                old_dep_names = set()
+                dep_state = self._read_mod_dependency_state()
+                for dep_key, parents in dep_state.get("required_by", {}).items():
+                    if old_name.lower() in [p.lower() for p in parents]:
+                        old_dep_names.add(dep_key)
+                
+                # Download new dependencies
+                new_dep_names = {str(dep.filename).strip().lower() for dep in deps_to_install}
                 for dep in deps_to_install:
                     modrinth_client.download_to(dep.download_url, mods_dir / dep.filename)
 
+                # Remove old dependencies that are no longer needed
+                removed_deps = old_dep_names - new_dep_names
+                for removed_dep in removed_deps:
+                    try:
+                        dep_path = self._find_mod_jar_path(mods_dir, removed_dep)
+                        if dep_path and dep_path.exists():
+                            # Check if any other mod needs this dependency
+                            remaining_parents = [
+                                p for p in dep_state.get("required_by", {}).get(removed_dep, [])
+                                if p.lower() != old_name.lower()
+                            ]
+                            if not remaining_parents:
+                                dep_path.unlink(missing_ok=True)
+                    except Exception:
+                        pass
+
                 modrinth_client.download_to(latest.download_url, mods_dir / latest.filename)
-                old_name = str((meta or {}).get("filename", "")).strip()
                 if old_name and old_name.lower() != latest.filename.lower():
                     old_path = self._find_mod_jar_path(mods_dir, old_name)
                     if old_path and old_path.exists():
                         old_path.unlink(missing_ok=True)
                     self._remove_mod_from_mod_states(old_name)
+                    # Clean up old dependency relationships and orphaned dependency mods
+                    self._cleanup_orphaned_dependencies(old_name)
+                    self._remove_mod_from_dependency_state(old_name)
 
                 self._record_individual_mod_install(
                     project_id,
