@@ -23,6 +23,17 @@ class ManagePlayitTunnelDialog(Adw.Dialog):
         self.set_title(f"Manage {tunnel_name} Tunnel")
         self.set_content_width(400)
         
+        # Parse domain if it contains a remote port (format: "domain:port")
+        remote_port = port
+        display_domain = domain
+        if ":" in domain:
+            parts = domain.rsplit(":", 1)
+            display_domain = parts[0]
+            try:
+                remote_port = int(parts[1])
+            except (ValueError, IndexError):
+                pass
+        
         self._toolbar_view = Adw.ToolbarView()
         
         header = Adw.HeaderBar()
@@ -37,12 +48,12 @@ class ManagePlayitTunnelDialog(Adw.Dialog):
         type_row = Adw.ActionRow(title="Connection type", subtitle=connection_type)
         group.add(type_row)
         
-        # Port
-        port_row = Adw.ActionRow(title="Port", subtitle=str(port))
+        # Port (show remote port for tunnel endpoint)
+        port_row = Adw.ActionRow(title="Port", subtitle=str(remote_port))
         group.add(port_row)
         
         # Domain
-        domain_row = Adw.ActionRow(title="Domain", subtitle=domain)
+        domain_row = Adw.ActionRow(title="Domain", subtitle=display_domain)
         group.add(domain_row)
         
         page.add(group)

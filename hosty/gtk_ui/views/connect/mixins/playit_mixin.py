@@ -85,6 +85,63 @@ class PlayitMixin:
             },
         )
 
+    def _clear_tunnel_endpoint_for_all_servers(self, endpoint_key: str) -> None:
+        """Clear a tunnel endpoint configuration for all servers."""
+        if not self._server_manager:
+            return
+        
+        for server in self._server_manager.servers:
+            try:
+                server_root = str(server.server_dir)
+                cfg = load_playit_config(server_root)
+                cfg[endpoint_key] = ""
+                save_playit_config(
+                    server_root,
+                    {
+                        "secret": str(cfg.get("secret", "")).strip(),
+                        "enabled": bool(cfg.get("enabled", False)),
+                        "setup_complete": bool(cfg.get("setup_complete", False)),
+                        "auto_start": bool(cfg.get("auto_start", True)),
+                        "auto_install": bool(cfg.get("auto_install", True)),
+                        "java_endpoint": "" if endpoint_key == "java_endpoint" else str(cfg.get("java_endpoint", "")).strip(),
+                        "bedrock_endpoint": "" if endpoint_key == "bedrock_endpoint" else str(cfg.get("bedrock_endpoint", "")).strip(),
+                        "voicechat_endpoint": "" if endpoint_key == "voicechat_endpoint" else str(cfg.get("voicechat_endpoint", "")).strip(),
+                    },
+                )
+            except Exception:
+                pass
+
+    def _update_tunnel_endpoint_for_servers_that_have_it(self, endpoint_key: str, new_endpoint: str) -> None:
+        """Update a tunnel endpoint for all servers that already have it."""
+        if not self._server_manager or not new_endpoint:
+            return
+        
+        for server in self._server_manager.servers:
+            try:
+                server_root = str(server.server_dir)
+                cfg = load_playit_config(server_root)
+                # Only update if this server already has this tunnel type
+                if str(cfg.get(endpoint_key, "")).strip():
+                    java_endpoint = new_endpoint if endpoint_key == "java_endpoint" else str(cfg.get("java_endpoint", "")).strip()
+                    bedrock_endpoint = new_endpoint if endpoint_key == "bedrock_endpoint" else str(cfg.get("bedrock_endpoint", "")).strip()
+                    voicechat_endpoint = new_endpoint if endpoint_key == "voicechat_endpoint" else str(cfg.get("voicechat_endpoint", "")).strip()
+                    
+                    save_playit_config(
+                        server_root,
+                        {
+                            "secret": str(cfg.get("secret", "")).strip(),
+                            "enabled": bool(cfg.get("enabled", False)),
+                            "setup_complete": bool(cfg.get("setup_complete", False)),
+                            "auto_start": bool(cfg.get("auto_start", True)),
+                            "auto_install": bool(cfg.get("auto_install", True)),
+                            "java_endpoint": java_endpoint,
+                            "bedrock_endpoint": bedrock_endpoint,
+                            "voicechat_endpoint": voicechat_endpoint,
+                        },
+                    )
+            except Exception:
+                pass
+
     def _on_auto_start_toggled(self, *_args):
         if self._suppress_config_updates:
             return
@@ -202,7 +259,13 @@ class PlayitMixin:
 
         bedrock_endpoint = str(self._cfg.get("bedrock_endpoint", "")).strip()
         if bedrock_endpoint:
-            self._bedrock_domain_row.set_subtitle(bedrock_endpoint)
+            # Format bedrock endpoint with middle dot separator and Port label (domain:port -> domain · Port port)
+            if ":" in bedrock_endpoint:
+                domain, port = bedrock_endpoint.rsplit(":", 1)
+                formatted_endpoint = f"{domain} · Port {port}"
+            else:
+                formatted_endpoint = bedrock_endpoint
+            self._bedrock_domain_row.set_subtitle(formatted_endpoint)
             self._bedrock_domain_row.set_activatable(True)
             self._copy_bedrock_domain_btn.set_sensitive(True)
             self._copy_bedrock_domain_btn.set_visible(True)
@@ -260,7 +323,13 @@ class PlayitMixin:
 
         voicechat_endpoint = str(self._cfg.get("voicechat_endpoint", "")).strip()
         if voicechat_endpoint:
-            self._voicechat_domain_row.set_subtitle(voicechat_endpoint)
+            # Format voicechat endpoint with middle dot separator and Port label (domain:port -> domain · Port port)
+            if ":" in voicechat_endpoint:
+                domain, port = voicechat_endpoint.rsplit(":", 1)
+                formatted_endpoint = f"{domain} · Port {port}"
+            else:
+                formatted_endpoint = voicechat_endpoint
+            self._voicechat_domain_row.set_subtitle(formatted_endpoint)
             self._voicechat_domain_row.set_activatable(True)
             self._copy_voicechat_domain_btn.set_sensitive(True)
             self._copy_voicechat_domain_btn.set_visible(True)
@@ -351,12 +420,15 @@ class PlayitMixin:
         if not endpoint:
             return
 
+        # Extract domain only (remove port if present)
+        domain_only = endpoint.rsplit(":", 1)[0] if ":" in endpoint else endpoint
+
         try:
             display = Gdk.Display.get_default()
             if not display:
                 return
             clipboard = display.get_clipboard()
-            clipboard.set(endpoint)
+            clipboard.set(domain_only)
             self._toast("Bedrock tunnel domain copied")
         except Exception:
             pass
@@ -373,12 +445,15 @@ class PlayitMixin:
         if not endpoint:
             return
 
+        # Extract domain only (remove port if present)
+        domain_only = endpoint.rsplit(":", 1)[0] if ":" in endpoint else endpoint
+
         try:
             display = Gdk.Display.get_default()
             if not display:
                 return
             clipboard = display.get_clipboard()
-            clipboard.set(endpoint)
+            clipboard.set(domain_only)
             self._toast("Voice Chat tunnel domain copied")
         except Exception:
             pass
@@ -513,6 +588,8 @@ class PlayitMixin:
                     self._java_tunnel_in_progress = False
                     if ok and endpoint:
                         self._save_server_config({"java_endpoint": endpoint})
+                        if had_java_tunnel:
+                            self._update_tunnel_endpoint_for_servers_that_have_it("java_endpoint", endpoint)
                     self._refresh_status_row()
                     if ok:
                         self._toast(msg)
@@ -585,6 +662,8 @@ class PlayitMixin:
                     self._bedrock_in_progress = False
                     if ok and endpoint:
                         self._save_server_config({"bedrock_endpoint": endpoint})
+                        if had_bedrock_tunnel:
+                            self._update_tunnel_endpoint_for_servers_that_have_it("bedrock_endpoint", endpoint)
                     self._refresh_status_row()
                     if ok:
                         self._toast(msg)
@@ -669,6 +748,8 @@ class PlayitMixin:
                     self._voicechat_in_progress = False
                     if ok and endpoint:
                         self._save_server_config({"voicechat_endpoint": endpoint})
+                        if had_voicechat_tunnel:
+                            self._update_tunnel_endpoint_for_servers_that_have_it("voicechat_endpoint", endpoint)
                     self._refresh_status_row()
                     if ok:
                         self._toast(msg)
@@ -727,7 +808,8 @@ class PlayitMixin:
                 def ui_done():
                     self._java_tunnel_in_progress = False
                     if ok or "No java tunnel found" in str(msg):
-                        self._save_server_config({"java_endpoint": ""})
+                        self._clear_tunnel_endpoint_for_all_servers("java_endpoint")
+                        self._load_server_config()
                     self._refresh_status_row()
                     if ok:
                         self._toast(msg)
@@ -772,7 +854,8 @@ class PlayitMixin:
                 def ui_done():
                     self._bedrock_in_progress = False
                     if ok or "No bedrock tunnel found" in str(msg):
-                        self._save_server_config({"bedrock_endpoint": ""})
+                        self._clear_tunnel_endpoint_for_all_servers("bedrock_endpoint")
+                        self._load_server_config()
                     self._refresh_status_row()
                     if ok:
                         self._toast(msg)
@@ -817,7 +900,8 @@ class PlayitMixin:
                 def ui_done():
                     self._voicechat_in_progress = False
                     if ok or "No voice chat tunnel found" in str(msg):
-                        self._save_server_config({"voicechat_endpoint": ""})
+                        self._clear_tunnel_endpoint_for_all_servers("voicechat_endpoint")
+                        self._load_server_config()
                     self._refresh_status_row()
                     if ok:
                         self._toast(msg)

@@ -1102,6 +1102,9 @@ class PlayitManager(EventEmitter):
             return False, f"failed to allocate a {protocol.upper()} playit tunnel", ""
 
         endpoint = str(tunnel.hostname or "").strip()
+        # For bedrock and voicechat tunnels, include the remote port in the endpoint
+        if tunnel_kind in ("bedrock", "voicechat") and tunnel.remote_port:
+            endpoint = f"{tunnel.domain}:{tunnel.remote_port}"
         if endpoint:
             return True, f"{display_name} tunnel ready: {endpoint}", endpoint
         return True, f"{display_name} tunnel created on {protocol.upper()} port {port}", ""

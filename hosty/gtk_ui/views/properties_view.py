@@ -146,12 +146,6 @@ class PropertiesView(Gtk.Box):
         # ===== Network Group =====
         network = Adw.PreferencesGroup(title="Network")
         
-        self._widgets["server-port"] = self._add_spin_row(
-            network, "Server Port", "server-port", 1024, 65535, 25565
-        )
-        self._widgets["online-mode"] = self._add_switch_row(
-            network, "Online Mode", "online-mode", True, ""
-        )
         self._widgets["enable-query"] = self._add_switch_row(
             network, "Enable Query", "enable-query", False, ""
         )
@@ -181,9 +175,6 @@ class PropertiesView(Gtk.Box):
         )
         self._widgets["allow-nether"] = self._add_switch_row(
             advanced, "Allow Nether", "allow-nether", True, ""
-        )
-        self._widgets["enable-rcon"] = self._add_switch_row(
-            advanced, "Enable RCON", "enable-rcon", False, ""
         )
         
         page.add(advanced)
