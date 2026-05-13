@@ -1,5 +1,7 @@
 # Hosty
 
+[![Flathub Downloads](https://img.shields.io/flathub/downloads/io.github.sugarycandybar.Hosty?label=Flathub%20Downloads&color=4A90E2)](https://flathub.org/en/apps/io.github.sugarycandybar.Hosty)
+
 Hosty is a desktop app for creating, running, and managing Minecraft Fabric servers with a clean, native-style UI.
 
 It keeps the full server workflow in one app: setup, start/stop, monitoring, mod management, backups, and player access controls.
@@ -15,7 +17,6 @@ It keeps the full server workflow in one app: setup, start/stop, monitoring, mod
 
 
 ## Run Hosty
-
 [![Download on Flathub](https://flathub.org/assets/badges/flathub-badge-en.png)](https://flathub.org/en/apps/io.github.sugarycandybar.Hosty)
 
 - Linux: use the Flatpak release from [Flathub](https://flathub.org/en/apps/io.github.sugarycandybar.Hosty).
