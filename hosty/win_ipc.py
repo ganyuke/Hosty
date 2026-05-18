@@ -3,11 +3,15 @@ import json
 import threading
 import logging
 import time
+import subprocess
+import socket
+from pathlib import Path
 from typing import Any, Dict, Optional
 
 from hosty.shared.backend.server_manager import ServerManager
 from hosty.shared.backend.server_process import ServerProcess
 from hosty.shared.core.events import set_main_thread_dispatcher
+from hosty.shared.utils.constants import COMMON_COMMANDS
 
 try:
     import psutil
@@ -23,6 +27,7 @@ class WinIPCBackend:
         self.server_manager = ServerManager()
         self.stdout_lock = threading.Lock()
         self._output_handlers: dict[str, int] = {}  # server_id -> handler_id
+        self._status_handlers: dict[str, int] = {}  # server_id -> handler_id
         self._psutil_processes: dict[str, Any] = {}  # server_id -> psutil.Process
         
         # Dispatch events from ServerManager back to stdout as JSON events
@@ -84,6 +89,137 @@ class WinIPCBackend:
                     pass
             del self._output_handlers[server_id]
 
+    def _attach_status_output(self, server_id: str, proc: ServerProcess):
+        """Attach to status changes once and mirror GTK's stop-time background work."""
+        if server_id in self._status_handlers:
+            return
+
+        def on_status(process, status):
+            self.send_event("server-status", {"server_id": server_id, "status": status})
+            if status == "stopped" and self.server_manager.preferences.auto_backup_on_stop:
+                def backup_task():
+                    ok, msg = self.server_manager.create_world_backup(server_id, auto=True)
+                    event = "backup-complete" if ok else "backup-skipped"
+                    self.send_event(event, {"server_id": server_id, "message": msg})
+                threading.Thread(target=backup_task, daemon=True).start()
+
+        handler_id = proc.connect('status-changed', on_status)
+        self._status_handlers[server_id] = handler_id
+
+    def _detach_status_output(self, server_id: str):
+        if server_id in self._status_handlers:
+            proc = self.server_manager.get_existing_process(server_id)
+            if proc:
+                try:
+                    proc.disconnect(self._status_handlers[server_id])
+                except Exception:
+                    pass
+            del self._status_handlers[server_id]
+
+    def _preferences_to_dict(self) -> dict:
+        prefs = self.server_manager.preferences
+        return {
+            "default_ram_mb": prefs.default_ram_mb,
+            "run_in_background_on_close": prefs.run_in_background_on_close,
+            "open_on_startup": prefs.open_on_startup,
+            "prevent_sleep_while_running": prefs.prevent_sleep_while_running,
+            "auto_backup_on_stop": prefs.auto_backup_on_stop,
+            "auto_resolve_mod_dependencies": prefs.auto_resolve_mod_dependencies,
+            "theme": prefs.theme,
+        }
+
+    def _set_preference(self, key: str, value: Any):
+        allowed = set(self._preferences_to_dict().keys())
+        if key not in allowed:
+            raise ValueError(f"Unknown preference: {key}")
+        setattr(self.server_manager.preferences, key, value)
+
+    def _get_config_payload(self, server_id: str) -> dict:
+        info = self.server_manager.get_server(server_id)
+        if not info:
+            raise ValueError("Server not found")
+        config = self.server_manager.get_config(server_id)
+        if not config:
+            raise ValueError("Server config not found")
+        props = config.load()
+        return {
+            "properties": props,
+            "ram_mb": info.ram_mb,
+            "autostart": info.autostart,
+            "mc_version": info.mc_version,
+            "loader_version": info.loader_version,
+        }
+
+    def _get_local_ip(self) -> str:
+        sock = None
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            sock.connect(("8.8.8.8", 80))
+            ip = sock.getsockname()[0]
+            if ip and not ip.startswith("127."):
+                return ip
+        except Exception:
+            pass
+        finally:
+            if sock:
+                try:
+                    sock.close()
+                except Exception:
+                    pass
+
+        try:
+            ip = socket.gethostbyname(socket.gethostname())
+            if ip:
+                return ip
+        except Exception:
+            pass
+
+        return "Not available"
+
+    def _get_connection_info(self, server_id: str) -> dict:
+        info = self.server_manager.get_server(server_id)
+        if not info:
+            raise ValueError("Server not found")
+
+        config = self.server_manager.get_config(server_id)
+        port = "25565"
+        whitelist = False
+        if config:
+            config.load()
+            port = config.get("server-port", "25565") or "25565"
+            whitelist = config.get_bool("white-list", False)
+
+        local_ip = self._get_local_ip()
+        local_address = f"{local_ip}:{port}" if local_ip != "Not available" else local_ip
+        return {
+            "local_ip": local_ip,
+            "server_port": port,
+            "local_address": local_address,
+            "whitelist": whitelist,
+        }
+
+    def _list_backups(self, server_id: str) -> list[dict]:
+        info = self.server_manager.get_server(server_id)
+        if not info:
+            raise ValueError("Server not found")
+        backups_dir = info.server_dir / "hosty-backups"
+        if not backups_dir.is_dir():
+            return []
+        items = []
+        for path in backups_dir.glob("*.zip"):
+            try:
+                stat = path.stat()
+            except OSError:
+                continue
+            items.append({
+                "name": path.name,
+                "path": str(path),
+                "size_bytes": stat.st_size,
+                "modified": stat.st_mtime,
+                "is_full": path.name.startswith("hosty-full-backup-"),
+            })
+        return sorted(items, key=lambda item: item["modified"], reverse=True)
+
     def handle_request(self, req: Dict):
         req_id = req.get("id")
         method = req.get("method")
@@ -109,6 +245,86 @@ class WinIPCBackend:
                 sid = params.get("server_id")
                 info = self.server_manager.get_server(sid)
                 self.send_response(req_id, result=info.to_dict() if info else None)
+
+            elif method == "get_preferences":
+                self.send_response(req_id, result=self._preferences_to_dict())
+
+            elif method == "update_preference":
+                self._set_preference(params.get("key"), params.get("value"))
+                self.send_response(req_id, result=self._preferences_to_dict())
+
+            elif method == "get_server_properties":
+                self.send_response(req_id, result=self._get_config_payload(params.get("server_id")))
+
+            elif method == "get_connection_info":
+                self.send_response(req_id, result=self._get_connection_info(params.get("server_id")))
+
+            elif method == "get_common_commands":
+                self.send_response(req_id, result=COMMON_COMMANDS)
+
+            elif method == "update_server_properties":
+                sid = params.get("server_id")
+                updates = params.get("properties", {})
+                if not isinstance(updates, dict):
+                    raise ValueError("properties must be an object")
+                config = self.server_manager.get_config(sid)
+                if not config:
+                    raise ValueError("Server config not found")
+                config.load()
+                for key, value in updates.items():
+                    config.set_value(str(key), value)
+                config.save()
+
+                proc = self.server_manager.get_existing_process(sid)
+                if proc and "max-players" in updates:
+                    try:
+                        proc.set_max_players(config.get_int("max-players", 20))
+                    except Exception:
+                        pass
+
+                self.server_manager.emit_on_main_thread("server-changed", sid)
+                self.send_response(req_id, result=self._get_config_payload(sid))
+
+            elif method == "set_autostart":
+                ok, msg = self.server_manager.set_server_autostart(
+                    params.get("server_id"),
+                    bool(params.get("autostart", False)),
+                )
+                if ok:
+                    self.send_response(req_id, result=True)
+                else:
+                    self.send_response(req_id, error=msg or "Could not update autostart")
+
+            elif method == "create_world_backup":
+                ok, msg = self.server_manager.create_world_backup(params.get("server_id"), auto=False)
+                if ok:
+                    self.send_response(req_id, result={"message": msg})
+                else:
+                    self.send_response(req_id, error=msg)
+
+            elif method == "list_backups":
+                self.send_response(req_id, result=self._list_backups(params.get("server_id")))
+
+            elif method == "restore_backup":
+                sid = params.get("server_id")
+                backup_path = Path(str(params.get("path", ""))).expanduser()
+                ok, msg = self.server_manager.restore_world_backup(sid, backup_path)
+                if ok:
+                    self.send_response(req_id, result={"message": msg})
+                else:
+                    self.send_response(req_id, error=msg)
+
+            elif method == "open_server_folder":
+                info = self.server_manager.get_server(params.get("server_id"))
+                if not info:
+                    raise ValueError("Server not found")
+                path = str(info.server_dir)
+                if sys.platform == "win32":
+                    import os
+                    os.startfile(path)
+                else:
+                    subprocess.Popen(["xdg-open", path])
+                self.send_response(req_id, result=True)
                 
             elif method == "install_server":
                 name = params.get("name")
@@ -175,20 +391,28 @@ class WinIPCBackend:
             elif method == "delete_server":
                 sid = params.get("server_id")
                 self._detach_console_output(sid)
+                self._detach_status_output(sid)
                 self.server_manager.delete_server(sid, delete_files=params.get("delete_files", False))
                 self.send_response(req_id, result=True)
                 
             elif method == "start_server":
                 sid = params.get("server_id")
+                running_id = self.server_manager.get_running_server_id()
+                if running_id and running_id != sid:
+                    running = self.server_manager.get_server(running_id)
+                    name = running.name if running else "another server"
+                    self.send_response(req_id, error=f"{name} is already running. Stop it before starting another server.")
+                    return
+
+                if self.server_manager.is_mod_operation_active(sid):
+                    self.send_response(req_id, error="Mods are currently installing or updating for this server.")
+                    return
+
                 proc = self.server_manager.get_process(sid)
                 if proc:
                     # Attach console output streaming before starting
                     self._attach_console_output(sid, proc)
-                    
-                    # Also watch for status changes
-                    def on_status(process, status):
-                        self.send_event("server-status", {"server_id": sid, "status": status})
-                    proc.connect('status-changed', on_status)
+                    self._attach_status_output(sid, proc)
                     
                     proc.start()
                     self.send_response(req_id, result=True)

@@ -15,6 +15,7 @@ public sealed partial class MainWindow : Window
 {
     public PythonBackendClient IpcClient { get; private set; } = null!;
     private List<ServerModel> _servers = new();
+    private bool _autostartAttempted = false;
 
     // Store references to the dynamic menu items so we can remove/update them
     private readonly List<NavigationViewItem> _serverMenuItems = new();
@@ -42,6 +43,8 @@ public sealed partial class MainWindow : Window
         IpcClient.ServerAdded += (s, data) => Dispatch(async () => await RefreshServers());
         IpcClient.ServerRemoved += (s, data) => Dispatch(async () => await RefreshServers());
         IpcClient.ServerChanged += (s, data) => Dispatch(async () => await RefreshServers());
+        IpcClient.BackupComplete += (s, data) => Dispatch(() => ShowTeachingTip("Backup created", ReadMessage(data)));
+        IpcClient.BackupSkipped += (s, data) => Dispatch(() => System.Diagnostics.Debug.WriteLine($"Backup skipped: {ReadMessage(data)}"));
 
         // Resolve paths relative to the build output directory
         string baseDir = AppContext.BaseDirectory;
@@ -97,13 +100,36 @@ public sealed partial class MainWindow : Window
         DispatcherQueue.TryEnqueue(() => action());
     }
 
+    private static string ReadMessage(JsonElement data)
+    {
+        return data.TryGetProperty("message", out var msg) ? msg.GetString() ?? "" : "";
+    }
+
     private void IpcClient_BackendReady(object? sender, EventArgs e)
     {
         Dispatch(async () => {
+            await LoadPreferences();
             await RefreshServers();
+            await StartAutostartServer();
             // Navigate to Home initially
             NavFrame.Navigate(typeof(HomePage));
         });
+    }
+
+    private async Task LoadPreferences()
+    {
+        try
+        {
+            var prefs = await IpcClient.SendRequestAsync("get_preferences");
+            if (prefs.TryGetProperty("theme", out var themeProp))
+            {
+                App.ApplyTheme(themeProp.GetString());
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Error loading preferences: {ex.Message}");
+        }
     }
 
     private async Task RefreshServers()
@@ -224,6 +250,10 @@ public sealed partial class MainWindow : Window
             {
                 await ShowCreateServerDialog();
             }
+            else if (tag == "about")
+            {
+                NavFrame.Navigate(typeof(AboutPage));
+            }
             else if (tag.StartsWith("server_"))
             {
                 string serverId = tag.Substring(7);
@@ -245,6 +275,84 @@ public sealed partial class MainWindow : Window
         
         // Refresh when closed
         await RefreshServers();
+        if (!string.IsNullOrEmpty(dialog.CreatedServerId))
+        {
+            SelectServer(dialog.CreatedServerId);
+        }
+    }
+
+    private async Task StartAutostartServer()
+    {
+        if (_autostartAttempted) return;
+        _autostartAttempted = true;
+
+        var autostartServer = _servers.Find(s => s.AutoStart);
+        if (autostartServer == null) return;
+
+        try
+        {
+            await IpcClient.SendRequestAsync("start_server", new { server_id = autostartServer.Id });
+            ShowTeachingTip("Starting server", autostartServer.Name);
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"Autostart failed: {ex.Message}");
+        }
+    }
+
+    internal async Task DeleteServer(ServerModel server)
+    {
+        var dialog = new ContentDialog
+        {
+            Title = "Delete server?",
+            Content = $"Delete \"{server.Name}\" and its files? This cannot be undone.",
+            PrimaryButtonText = "Delete",
+            CloseButtonText = "Cancel",
+            DefaultButton = ContentDialogButton.Close,
+            XamlRoot = this.Content.XamlRoot
+        };
+
+        var result = await dialog.ShowAsync();
+        if (result != ContentDialogResult.Primary) return;
+
+        await IpcClient.SendRequestAsync("delete_server", new { server_id = server.Id, delete_files = true });
+        await RefreshServers();
+        NavFrame.Navigate(typeof(HomePage));
+    }
+
+    internal void SelectServer(string serverId)
+    {
+        foreach (var item in _serverMenuItems)
+        {
+            if (item.Tag?.ToString() == $"server_{serverId}")
+            {
+                NavView.SelectedItem = item;
+                var server = _servers.Find(s => s.Id == serverId);
+                if (server != null)
+                {
+                    NavFrame.Navigate(typeof(ServerDetailPage), Tuple.Create(server, IpcClient));
+                }
+                return;
+            }
+        }
+    }
+
+    internal void ShowTeachingTip(string title, string subtitle)
+    {
+        var tip = new TeachingTip
+        {
+            Title = title,
+            Subtitle = subtitle,
+            IsLightDismissEnabled = true,
+            IsOpen = true,
+            PreferredPlacement = TeachingTipPlacementMode.BottomRight,
+            XamlRoot = this.Content.XamlRoot
+        };
+        if (this.Content is Panel panel)
+        {
+            panel.Children.Add(tip);
+            tip.Closed += (_, _) => panel.Children.Remove(tip);
+        }
     }
 
     private void MainWindow_Closed(object sender, WindowEventArgs args)

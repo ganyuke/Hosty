@@ -8,8 +8,8 @@
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
     mc:Ignorable="d">
 
-    <TabView x:Name="ServerTabView" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent" Margin="0,12,0,0">
-        <TabViewItem Header="Overview" IsClosable="False">
+    <TabView x:Name="ServerTabView" IsAddTabButtonVisible="False" TabWidthMode="SizeToContent" Margin="0,8,0,0">
+        <TabViewItem Header="Dashboard" IsClosable="False">
             <TabViewItem.IconSource>
                 <SymbolIconSource Symbol="Home" />
             </TabViewItem.IconSource>
@@ -37,13 +37,17 @@
                         
                         <StackPanel Grid.Column="1" VerticalAlignment="Center">
                             <TextBlock x:Name="ServerNameTitle" Style="{StaticResource TitleTextBlockStyle}" Text="Server Name" />
-                            <TextBlock x:Name="ServerSubtitle" Style="{StaticResource CaptionTextBlockStyle}" Text="Minecraft 1.20.4 • Fabric" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
+                            <TextBlock x:Name="ServerSubtitle" Style="{StaticResource CaptionTextBlockStyle}" Text="Minecraft 1.20.4 - Fabric" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
                         </StackPanel>
 
-                        <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8">
-                            <Button x:Name="StartButton" Content="Start" Click="StartButton_Click" Style="{StaticResource AccentButtonStyle}" Width="80" />
-                            <Button x:Name="StopButton" Content="Stop" Click="StopButton_Click" Width="80" IsEnabled="False" />
-                        </StackPanel>
+                        <CommandBar Grid.Column="2" DefaultLabelPosition="Right" Background="Transparent">
+                            <AppBarButton x:Name="ToggleServerButton" Label="Start" Icon="Play" Click="ToggleServerButton_Click" />
+                            <AppBarSeparator />
+                            <AppBarButton Label="Folder" Icon="OpenFile" Click="OpenFolderButton_Click" />
+                            <AppBarButton Label="Backup" Icon="Save" Click="BackupButton_Click" />
+                            <AppBarButton Label="Rename" Icon="Edit" Click="RenameButton_Click" />
+                            <AppBarButton Label="Delete" Icon="Delete" Click="DeleteButton_Click" />
+                        </CommandBar>
                     </Grid>
 
                     <!-- Status Indicator / Cards -->
@@ -64,15 +68,15 @@
                                 <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="24" VerticalAlignment="Center" x:Name="StatsPanel" Visibility="Collapsed">
                                     <StackPanel>
                                         <TextBlock Text="CPU USAGE" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
-                                        <TextBlock x:Name="CpuText" Text="—" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock x:Name="CpuText" Text="-" Style="{StaticResource BodyStrongTextBlockStyle}" />
                                     </StackPanel>
                                     <StackPanel>
                                         <TextBlock Text="RAM USAGE" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
-                                        <TextBlock x:Name="RamUsageText" Text="—" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock x:Name="RamUsageText" Text="-" Style="{StaticResource BodyStrongTextBlockStyle}" />
                                     </StackPanel>
                                     <StackPanel>
                                         <TextBlock Text="PLAYERS" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
-                                        <TextBlock x:Name="PlayerCountText" Text="—" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock x:Name="PlayerCountText" Text="-" Style="{StaticResource BodyStrongTextBlockStyle}" />
                                     </StackPanel>
                                 </StackPanel>
                             </Grid>
@@ -88,7 +92,7 @@
 
                         <!-- Left Column: Settings -->
                         <StackPanel Spacing="16">
-                            <TextBlock Text="Server Configuration" Style="{StaticResource SubheaderTextBlockStyle}" />
+                            <TextBlock Text="Server" Style="{StaticResource SubheaderTextBlockStyle}" />
 
                             <!-- Allocation Card -->
                             <Border CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="16">
@@ -113,27 +117,40 @@
                                     <ToggleSwitch Grid.Column="1" x:Name="AutoBackupToggle" IsOn="True" Toggled="AutoBackupToggle_Toggled" OnContent="" OffContent="" />
                                 </Grid>
                             </Border>
-                        </StackPanel>
-
-                        <!-- Right Column: playit.gg integration -->
-                        <StackPanel Grid.Column="1" Spacing="16">
-                            <TextBlock Text="Playit.gg Tunnel" Style="{StaticResource SubheaderTextBlockStyle}" />
 
                             <Border CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="16">
-                                <StackPanel Spacing="12">
-                                    <Grid>
-                                        <Grid.ColumnDefinitions>
-                                            <ColumnDefinition Width="*" />
-                                            <ColumnDefinition Width="Auto" />
-                                        </Grid.ColumnDefinitions>
-                                        <StackPanel>
-                                            <TextBlock Text="Enable Playit Tunnel" Style="{StaticResource BodyStrongTextBlockStyle}" />
-                                            <TextBlock Text="Expose server securely without port forwarding" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
-                                        </StackPanel>
-                                        <ToggleSwitch Grid.Column="1" x:Name="PlayitToggle" Toggled="PlayitToggle_Toggled" OnContent="" OffContent="" />
-                                    </Grid>
+                                <Grid>
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Start on Launch" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock Text="Start this server when Hosty opens" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
+                                    </StackPanel>
+                                    <ToggleSwitch Grid.Column="1" x:Name="AutostartToggle" Toggled="AutostartToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                            </Border>
+                        </StackPanel>
 
-                                    <PasswordBox x:Name="PlayitSecretBox" Header="Playit Secret Key" PlaceholderText="Enter playit secret" PasswordChanged="PlayitSecretBox_PasswordChanged" />
+                        <!-- Right Column: runtime metadata -->
+                        <StackPanel Grid.Column="1" Spacing="16">
+                            <TextBlock Text="Runtime" Style="{StaticResource SubheaderTextBlockStyle}" />
+
+                            <Border CornerRadius="8" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" Padding="16">
+                                <StackPanel Spacing="16">
+                                    <StackPanel>
+                                        <TextBlock Text="Minecraft" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
+                                        <TextBlock x:Name="MinecraftVersionText" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Loader" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
+                                        <TextBlock x:Name="LoaderVersionText" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    </StackPanel>
+                                    <StackPanel>
+                                        <TextBlock Text="Java" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" />
+                                        <TextBlock x:Name="JavaVersionText" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    </StackPanel>
                                 </StackPanel>
                             </Border>
                         </StackPanel>
@@ -148,24 +165,289 @@
             </TabViewItem.IconSource>
             <Grid Padding="24">
                 <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
                     <RowDefinition Height="*" />
                     <RowDefinition Height="Auto" />
                 </Grid.RowDefinitions>
-                <Border Background="{ThemeResource ControlFillColorDefaultBrush}" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}" Padding="8">
+                <CommandBar DefaultLabelPosition="Right" Background="Transparent" Padding="0,0,0,8">
+                    <AppBarButton Label="Commands" Icon="Bullets">
+                        <AppBarButton.Flyout>
+                            <MenuFlyout x:Name="CommonCommandsMenu" />
+                        </AppBarButton.Flyout>
+                    </AppBarButton>
+                    <AppBarButton Label="Clear" Icon="Clear" Click="ClearConsoleButton_Click" />
+                </CommandBar>
+                <Border Grid.Row="1" Background="{ThemeResource ControlFillColorDefaultBrush}" CornerRadius="8" BorderThickness="1" BorderBrush="{ThemeResource SurfaceStrokeColorDefaultBrush}" Padding="8">
                     <ScrollViewer x:Name="ConsoleScroll">
                         <TextBlock x:Name="ConsoleText" FontFamily="Consolas" TextWrapping="Wrap" />
                     </ScrollViewer>
                 </Border>
-                <TextBox x:Name="ConsoleInputBox" Grid.Row="1" Margin="0,12,0,0" PlaceholderText="Enter a command (e.g. /say Hello)" KeyDown="ConsoleInputBox_KeyDown" />
+                <TextBox x:Name="ConsoleInputBox" Grid.Row="2" Margin="0,12,0,0" PlaceholderText="Enter a command (e.g. /say Hello)" KeyDown="ConsoleInputBox_KeyDown" />
             </Grid>
+        </TabViewItem>
+
+        <TabViewItem Header="Connect" IsClosable="False">
+            <TabViewItem.IconSource>
+                <SymbolIconSource Symbol="Globe" />
+            </TabViewItem.IconSource>
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Padding="24" Spacing="20" MaxWidth="760" HorizontalAlignment="Left">
+                    <InfoBar x:Name="ConnectInfoBar" IsOpen="False" />
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Local Network" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                            <StackPanel>
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Server Address" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock x:Name="LocalAddressText" Text="Detecting..." Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <Button Grid.Column="1" Content="Copy" Click="CopyLocalAddressButton_Click" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Port" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <TextBlock x:Name="ServerPortText" Grid.Column="1" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Players" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                            <StackPanel>
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <StackPanel>
+                                        <TextBlock Text="Whitelist" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                        <TextBlock Text="Only whitelisted players can join" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                    </StackPanel>
+                                    <ToggleSwitch x:Name="WhitelistToggle" Grid.Column="1" Toggled="WhitelistToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" RowSpacing="12">
+                                    <Grid.RowDefinitions>
+                                        <RowDefinition Height="Auto" />
+                                        <RowDefinition Height="Auto" />
+                                    </Grid.RowDefinitions>
+                                    <TextBox x:Name="PlayerNameBox" Header="Player" PlaceholderText="Minecraft username" />
+                                    <StackPanel Grid.Row="1" Orientation="Horizontal" Spacing="8">
+                                        <Button Content="Whitelist" Click="WhitelistPlayerButton_Click" />
+                                        <Button Content="Remove" Click="RemoveWhitelistPlayerButton_Click" />
+                                        <Button Content="Ban" Click="BanPlayerButton_Click" />
+                                        <Button Content="Pardon" Click="PardonPlayerButton_Click" />
+                                    </StackPanel>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
         </TabViewItem>
 
         <TabViewItem Header="Properties" IsClosable="False">
             <TabViewItem.IconSource>
                 <SymbolIconSource Symbol="Setting" />
             </TabViewItem.IconSource>
+            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                <StackPanel Padding="24" Spacing="20" MaxWidth="820" HorizontalAlignment="Left">
+                    <InfoBar x:Name="PropertiesInfoBar" IsOpen="False" Severity="Informational" />
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="General" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                            <StackPanel>
+                                <TextBox x:Name="MotdBox" Header="Message of the Day" Margin="16,12,16,8" LostFocus="Property_LostFocus" />
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="180" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Max Players" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <NumberBox x:Name="MaxPlayersBox" Grid.Column="1" Minimum="1" Maximum="1000" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="PropertyNumber_ValueChanged" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="220" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Difficulty" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="DifficultyBox" Grid.Column="1" HorizontalAlignment="Stretch" SelectionChanged="PropertyCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Peaceful" Tag="peaceful" />
+                                        <ComboBoxItem Content="Easy" Tag="easy" />
+                                        <ComboBoxItem Content="Normal" Tag="normal" />
+                                        <ComboBoxItem Content="Hard" Tag="hard" />
+                                        <ComboBoxItem Content="Hardcore" Tag="hardcore" />
+                                    </ComboBox>
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="220" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Default Gamemode" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ComboBox x:Name="GamemodeBox" Grid.Column="1" HorizontalAlignment="Stretch" SelectionChanged="PropertyCombo_SelectionChanged">
+                                        <ComboBoxItem Content="Survival" Tag="survival" />
+                                        <ComboBoxItem Content="Creative" Tag="creative" />
+                                        <ComboBoxItem Content="Adventure" Tag="adventure" />
+                                        <ComboBoxItem Content="Spectator" Tag="spectator" />
+                                    </ComboBox>
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="World and Network" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                            <StackPanel>
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="180" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="View Distance" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <NumberBox x:Name="ViewDistanceBox" Grid.Column="1" Minimum="2" Maximum="32" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="PropertyNumber_ValueChanged" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="180" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Simulation Distance" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <NumberBox x:Name="SimulationDistanceBox" Grid.Column="1" Minimum="2" Maximum="32" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="PropertyNumber_ValueChanged" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Enable Query" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="EnableQueryToggle" Grid.Column="1" Toggled="PropertyToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Players" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                            <StackPanel>
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="PvP" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="PvpToggle" Grid.Column="1" Toggled="PropertyToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Allow Flight" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="AllowFlightToggle" Grid.Column="1" Toggled="PropertyToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Keep Inventory" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="KeepInventoryToggle" Grid.Column="1" Toggled="PropertyToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+
+                    <StackPanel Spacing="12">
+                        <TextBlock Text="Advanced" Style="{StaticResource SubtitleTextBlockStyle}" />
+                        <Border Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1" CornerRadius="8">
+                            <StackPanel>
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Command Blocks" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="CommandBlocksToggle" Grid.Column="1" Toggled="PropertyToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="Auto" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Allow Nether" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <ToggleSwitch x:Name="AllowNetherToggle" Grid.Column="1" Toggled="PropertyToggle_Toggled" OnContent="" OffContent="" />
+                                </Grid>
+                                <Rectangle Height="1" Fill="{ThemeResource DividerStrokeColorDefaultBrush}" />
+                                <Grid Padding="16" ColumnSpacing="16">
+                                    <Grid.ColumnDefinitions>
+                                        <ColumnDefinition Width="*" />
+                                        <ColumnDefinition Width="180" />
+                                    </Grid.ColumnDefinitions>
+                                    <TextBlock Text="Spawn Protection" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center" />
+                                    <NumberBox x:Name="SpawnProtectionBox" Grid.Column="1" Minimum="0" Maximum="256" SmallChange="1" SpinButtonPlacementMode="Inline" ValueChanged="PropertyNumber_ValueChanged" />
+                                </Grid>
+                            </StackPanel>
+                        </Border>
+                    </StackPanel>
+                </StackPanel>
+            </ScrollViewer>
+        </TabViewItem>
+
+        <TabViewItem Header="Backups" IsClosable="False">
+            <TabViewItem.IconSource>
+                <SymbolIconSource Symbol="Save" />
+            </TabViewItem.IconSource>
             <Grid Padding="24">
-                <TextBlock Text="server.properties editor goes here" Foreground="{ThemeResource SystemControlPageTextBaseMediumBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" />
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="Auto" />
+                    <RowDefinition Height="*" />
+                </Grid.RowDefinitions>
+                <CommandBar DefaultLabelPosition="Right" Background="Transparent" Padding="0,0,0,8">
+                    <AppBarButton Label="Create" Icon="Save" Click="BackupButton_Click" />
+                    <AppBarButton Label="Refresh" Icon="Refresh" Click="RefreshBackupsButton_Click" />
+                </CommandBar>
+                <ListView x:Name="BackupsList" Grid.Row="1" SelectionMode="None">
+                    <ListView.ItemTemplate>
+                        <DataTemplate>
+                            <Grid Padding="12" ColumnSpacing="12">
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition Width="*" />
+                                    <ColumnDefinition Width="Auto" />
+                                </Grid.ColumnDefinitions>
+                                <StackPanel>
+                                    <TextBlock Text="{Binding Name}" Style="{StaticResource BodyStrongTextBlockStyle}" />
+                                    <TextBlock Text="{Binding Detail}" Style="{StaticResource CaptionTextBlockStyle}" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+                                </StackPanel>
+                                <Button Grid.Column="1" Content="Restore" Tag="{Binding Path}" Click="RestoreBackupButton_Click" />
+                            </Grid>
+                        </DataTemplate>
+                    </ListView.ItemTemplate>
+                </ListView>
             </Grid>
         </TabViewItem>
     </TabView>

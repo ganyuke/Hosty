@@ -16,6 +16,7 @@ namespace winui_ui;
 public partial class App : Application
 {
     public static MainWindow? MainWindow { get; private set; }
+    public static ElementTheme HostyRequestedTheme { get; private set; } = ElementTheme.Default;
 
     /// <summary>
     /// Initializes the singleton application object.  This is the first line of authored code
@@ -34,5 +35,20 @@ public partial class App : Application
     {
         MainWindow = new MainWindow();
         MainWindow.Activate();
+    }
+
+    public static void ApplyTheme(string? theme)
+    {
+        HostyRequestedTheme = theme switch
+        {
+            "light" => ElementTheme.Light,
+            "dark" => ElementTheme.Dark,
+            _ => ElementTheme.Default,
+        };
+
+        if (MainWindow?.Content is FrameworkElement root)
+        {
+            root.RequestedTheme = HostyRequestedTheme;
+        }
     }
 }

@@ -6,7 +6,7 @@
     xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
     xmlns:local="using:winui_ui"
     xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-    Title="winui_ui"
+    Title="Hosty"
     mc:Ignorable="d">
     <Window.SystemBackdrop>
         <MicaBackdrop />
@@ -45,6 +45,15 @@
                     </NavigationViewItem.Icon>
                 </NavigationViewItem>
             </NavigationView.MenuItems>
+            <NavigationView.FooterMenuItems>
+                <NavigationViewItem
+                    Content="About Hosty"
+                    Tag="about">
+                    <NavigationViewItem.Icon>
+                        <SymbolIcon Symbol="Help" />
+                    </NavigationViewItem.Icon>
+                </NavigationViewItem>
+            </NavigationView.FooterMenuItems>
             <Frame x:Name="NavFrame" />
         </NavigationView>
     </Grid>

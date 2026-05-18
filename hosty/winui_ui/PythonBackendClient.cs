@@ -28,6 +28,8 @@ namespace winui_ui
         public event EventHandler<JsonElement>? InstallError;
         public event EventHandler<JsonElement>? ConsoleOutput;
         public event EventHandler<JsonElement>? ServerStatusChanged;
+        public event EventHandler<JsonElement>? BackupComplete;
+        public event EventHandler<JsonElement>? BackupSkipped;
 
         /// <summary>
         /// Starts the Python IPC backend process.
@@ -155,6 +157,12 @@ namespace winui_ui
                                     break;
                                 case "server-status":
                                     ServerStatusChanged?.Invoke(this, data);
+                                    break;
+                                case "backup-complete":
+                                    BackupComplete?.Invoke(this, data);
+                                    break;
+                                case "backup-skipped":
+                                    BackupSkipped?.Invoke(this, data);
                                     break;
                             }
                         }

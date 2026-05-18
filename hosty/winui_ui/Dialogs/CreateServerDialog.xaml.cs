@@ -12,6 +12,7 @@ namespace winui_ui.Dialogs
         private List<string> _gameVersions = new();
         private List<string> _loaderVersions = new();
         private bool _isInstalling = false;
+        public string CreatedServerId { get; private set; } = "";
 
         public CreateServerDialog()
         {
@@ -200,6 +201,9 @@ namespace winui_ui.Dialogs
         {
             DispatcherQueue.TryEnqueue(() =>
             {
+                if (data.TryGetProperty("server_id", out var sidProp))
+                    CreatedServerId = sidProp.GetString() ?? "";
+
                 InstallProgressBar.Value = 100;
                 ProgressTitle.Text = "Server Created!";
                 ProgressSubtitle.Text = "Ready to start.";
