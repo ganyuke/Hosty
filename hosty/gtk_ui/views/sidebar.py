@@ -36,7 +36,7 @@ class ServerRow(Adw.ActionRow):
         self.add_prefix(self._avatar)
         
         # Status dot
-        self._status_dot = Gtk.Label(label="●")
+        self._status_dot = Gtk.Label()
         self._status_dot.set_size_request(10, 10)
         self._status_dot.add_css_class("status-dot")
         self._status_dot.add_css_class("stopped")
@@ -77,6 +77,13 @@ class ServerRow(Adw.ActionRow):
         for cls in ["running", "starting", "stopping", "stopped"]:
             self._status_dot.remove_css_class(cls)
         self._status_dot.add_css_class(status)
+        color = {
+            ServerStatus.RUNNING: "#2ec27e",
+            ServerStatus.STARTING: "#e5a50a",
+            ServerStatus.STOPPING: "#e5a50a",
+            ServerStatus.STOPPED: "#8e8e8e",
+        }.get(status, "#8e8e8e")
+        self._status_dot.set_markup(f'<span foreground="{color}">●</span>')
 
     def _disconnect_process_handlers(self):
         if self._process and self._status_handler_id:
