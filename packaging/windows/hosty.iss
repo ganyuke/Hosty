@@ -1,5 +1,5 @@
 #define AppName "Hosty"
-#define AppPublisher "SugaryCandyBar"
+#define AppPublisher "Sugarycandybar"
 #define AppURL "https://github.com/sugarycandybar/Hosty"
 #define AppExeName "Hosty.exe"
 
