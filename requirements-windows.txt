@@ -1,5 +1,0 @@
-# PyGObject, GTK4, and libadwaita are installed through MSYS2 or Conda on Windows.
-# See the Windows source setup in README.md.
-requests>=2.31
-psutil>=5.9
-Pillow>=10.0

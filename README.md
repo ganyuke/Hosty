@@ -57,13 +57,12 @@ Recommended MSYS2 UCRT64 setup:
 
 ```bash
 pacman -Suy
-pacman -S mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-python-gobject mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-libadwaita
+pacman -S mingw-w64-ucrt-x86_64-python mingw-w64-ucrt-x86_64-python-gobject mingw-w64-ucrt-x86_64-python-requests mingw-w64-ucrt-x86_64-python-psutil mingw-w64-ucrt-x86_64-python-pillow mingw-w64-ucrt-x86_64-gtk4 mingw-w64-ucrt-x86_64-libadwaita
 ```
 
-Then run these from the MSYS2 UCRT64 shell:
+Then run from the MSYS2 UCRT64 shell:
 
 ```bash
-python -m pip install -r requirements-windows.txt
 python hosty.py
 ```
 
