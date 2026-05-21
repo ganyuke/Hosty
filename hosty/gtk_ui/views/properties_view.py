@@ -185,9 +185,9 @@ class PropertiesView(Gtk.Box):
 
     def _connect_auto_save_signals(self):
         for widget in self._widgets.values():
-            if isinstance(widget, Adw.EntryRow):
-                widget.connect("changed", self._on_widget_changed)
-            elif isinstance(widget, Adw.SpinRow):
+            if isinstance(widget, Adw.SpinRow):
+                widget.connect("notify::value", self._on_widget_changed)
+            elif isinstance(widget, Adw.EntryRow):
                 widget.connect("changed", self._on_widget_changed)
             elif isinstance(widget, Adw.SwitchRow):
                 widget.connect("notify::active", self._on_widget_changed)
@@ -195,7 +195,7 @@ class PropertiesView(Gtk.Box):
                 widget.connect("notify::selected", self._on_widget_changed)
 
         if self._ram_row:
-            self._ram_row.connect("changed", self._on_widget_changed)
+            self._ram_row.connect("notify::value", self._on_widget_changed)
 
         if self._autostart_row:
             self._autostart_row.connect("notify::active", self._on_autostart_toggled)

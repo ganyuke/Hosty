@@ -121,6 +121,15 @@ WNDPROC = ctypes.WINFUNCTYPE(
     LPARAM,
 )
 
+# Tell ctypes about DefWindowProcW's signature so it doesn't truncate arguments
+user32.DefWindowProcW.argtypes = [
+    ctypes.wintypes.HWND,
+    ctypes.wintypes.UINT,
+    WPARAM,
+    LPARAM,
+]
+user32.DefWindowProcW.restype = ctypes.c_ssize_t
+
 
 class WindowsTrayManager:
     """Manages the Windows notification area icon using raw Win32 API."""
