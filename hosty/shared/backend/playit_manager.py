@@ -388,6 +388,28 @@ class PlayitManager(EventEmitter):
         return bool(self.read_claimed_secret())
 
     def _detect_version(self, binary: str) -> tuple[int, int, int]:
+        # Try v1.x style first: playit version
+        try:
+            result = subprocess.run(
+                [binary, "version"],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                timeout=6,
+                **hidden_subprocess_kwargs(),
+            )
+            text = (result.stdout or "").strip()
+            print(f"[PLAYIT DEBUG] Version output (v1.x style): {text}")
+            match = VERSION_RE.search(text)
+            if match:
+                version = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                print(f"[PLAYIT DEBUG] Parsed version: {version}")
+                return version
+        except Exception as e:
+            print(f"[PLAYIT DEBUG] v1.x version detection failed: {e}")
+            pass
+        
+        # Try old style: playit --version
         try:
             result = subprocess.run(
                 [binary, "--version"],
@@ -398,12 +420,65 @@ class PlayitManager(EventEmitter):
                 **hidden_subprocess_kwargs(),
             )
             text = (result.stdout or "").strip()
+            print(f"[PLAYIT DEBUG] Version output (old style): {text}")
             match = VERSION_RE.search(text)
             if match:
-                return int(match.group(1)), int(match.group(2)), int(match.group(3))
-        except Exception:
+                version = (int(match.group(1)), int(match.group(2)), int(match.group(3)))
+                print(f"[PLAYIT DEBUG] Parsed version: {version}")
+                return version
+        except Exception as e:
+            print(f"[PLAYIT DEBUG] Old style version detection failed: {e}")
             pass
+        
+        print(f"[PLAYIT DEBUG] Using default version 0.17.1")
         return 0, 17, 1
+
+    def _is_incompatible_version(self, binary: str) -> bool:
+        """Check if binary version is 1.x (incompatible with subprocess approach)."""
+        major, minor, patch = self._detect_version(binary)
+        is_incompatible = major >= 1
+        print(f"[PLAYIT DEBUG] Version check: {major}.{minor}.{patch} -> incompatible={is_incompatible}")
+        return is_incompatible
+
+    def _download_specific_version(self, version_tag: str) -> tuple[bool, str]:
+        """Download a specific release version (e.g., 'v0.17.1')."""
+        try:
+            release_url = f"https://api.github.com/repos/playit-cloud/playit-agent/releases/tags/{version_tag}"
+            req = urllib.request.Request(
+                release_url,
+                headers={"User-Agent": "Hosty/1.0", "Accept": "application/vnd.github+json"},
+            )
+            with urllib.request.urlopen(req, timeout=20.0) as resp:
+                data = json.loads(resp.read().decode("utf-8"))
+
+            assets = data.get("assets") or []
+            if not isinstance(assets, list):
+                return False, "Release assets unavailable"
+
+            asset = self._select_asset(assets)
+            if not asset:
+                return False, "No compatible playit build found for this platform"
+
+            download_url = str(asset.get("browser_download_url", "")).strip()
+            if not download_url:
+                return False, "Download URL missing"
+
+            target = self.binary_path
+            target.parent.mkdir(parents=True, exist_ok=True)
+
+            req_bin = urllib.request.Request(download_url, headers={"User-Agent": "Hosty/1.0"})
+            with urllib.request.urlopen(req_bin, timeout=120.0) as resp:
+                payload = resp.read()
+
+            with open(target, "wb") as f:
+                f.write(payload)
+
+            if sys.platform != "win32":
+                target.chmod(0o755)
+
+            return True, str(target)
+        except Exception as e:
+            return False, str(e)
 
     def install_latest_binary(self) -> tuple[bool, str]:
         """Download and install latest playit binary for this platform."""
@@ -886,6 +961,17 @@ class PlayitManager(EventEmitter):
             if not binary:
                 return False, "playit binary not found"
 
+        # Check if current binary is v1.x (incompatible) and downgrade to v0.17.1
+        if binary and self._is_incompatible_version(binary):
+            print(f"[PLAYIT DEBUG] Detected v1.x binary in start(), attempting downgrade to v0.17.1")
+            ok, msg = self._download_specific_version("v0.17.1")
+            print(f"[PLAYIT DEBUG] Downgrade result: ok={ok}, msg={msg}")
+            if ok:
+                binary = self.resolve_binary()
+                print(f"[PLAYIT DEBUG] New binary path: {binary}")
+            else:
+                return False, f"Failed to downgrade playit to v0.17.1: {msg}"
+
         provided_secret = str(secret or "").strip()
         existing_secret = self.read_claimed_secret()
         if provided_secret and not existing_secret:
@@ -965,6 +1051,17 @@ class PlayitManager(EventEmitter):
             if not binary:
                 return False, "playit binary not found"
 
+        # Check if current binary is v1.x (incompatible) and downgrade to v0.17.1
+        if binary and self._is_incompatible_version(binary):
+            print(f"[PLAYIT DEBUG] Detected v1.x binary in regenerate_domain(), attempting downgrade to v0.17.1")
+            ok, msg = self._download_specific_version("v0.17.1")
+            print(f"[PLAYIT DEBUG] Downgrade result: ok={ok}, msg={msg}")
+            if ok:
+                binary = self.resolve_binary()
+                print(f"[PLAYIT DEBUG] New binary path: {binary}")
+            else:
+                return False, f"Failed to downgrade playit to v0.17.1: {msg}"
+
         provided_secret = str(secret or "").strip()
         existing_secret = self.read_claimed_secret()
         if provided_secret and not existing_secret:
@@ -1023,6 +1120,17 @@ class PlayitManager(EventEmitter):
                 binary = self.resolve_binary()
             if not binary:
                 return False, "playit binary not found"
+
+        # Check if current binary is v1.x (incompatible) and downgrade to v0.17.1
+        if binary and self._is_incompatible_version(binary):
+            print(f"[PLAYIT DEBUG] Detected v1.x binary in _ensure_api_ready(), attempting downgrade to v0.17.1")
+            ok, msg = self._download_specific_version("v0.17.1")
+            print(f"[PLAYIT DEBUG] Downgrade result: ok={ok}, msg={msg}")
+            if ok:
+                binary = self.resolve_binary()
+                print(f"[PLAYIT DEBUG] New binary path: {binary}")
+            else:
+                return False, f"Failed to downgrade playit to v0.17.1: {msg}"
 
         provided_secret = str(secret or "").strip()
         existing_secret = self.read_claimed_secret()
