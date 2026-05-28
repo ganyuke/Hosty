@@ -39,7 +39,8 @@ class LocalIpMixin:
             description="Share your LAN address for local multiplayer",
         )
         row = Adw.ActionRow(title="Local device IP", subtitle="Detecting...")
-        row.set_activatable(False)
+        row.set_activatable(True)
+        row.connect("activated", self._on_copy_local_ip)
         copy_btn = Gtk.Button(icon_name="edit-copy-symbolic", valign=Gtk.Align.CENTER)
         copy_btn.add_css_class("flat")
         copy_btn.set_tooltip_text("Copy local IP")

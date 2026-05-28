@@ -163,6 +163,8 @@ class Sidebar(Gtk.Box):
         add_btn.set_tooltip_text("Create new server")
         add_btn.add_css_class("flat")
         add_btn.set_action_name("app.new-server")
+        add_btn.set_focusable(True)
+        self._add_btn = add_btn
         header.pack_start(add_btn)
         
         title = Gtk.Label(label="Servers")
@@ -173,11 +175,13 @@ class Sidebar(Gtk.Box):
         menu_btn.set_icon_name("open-menu-symbolic")
         menu_btn.set_tooltip_text("Main menu")
         menu_btn.add_css_class("flat")
+        menu_btn.set_focusable(True)
         menu = Gio.Menu()
         menu.append("Preferences", "app.preferences")
+        menu.append("Keyboard Shortcuts", "app.shortcuts")
         menu.append("About Hosty", "app.about")
-        menu.append("Quit", "app.quit")
         menu_btn.set_menu_model(menu)
+        self._menu_btn = menu_btn
         header.pack_end(menu_btn)
         
         self._toolbar_view.add_top_bar(header)
@@ -190,10 +194,26 @@ class Sidebar(Gtk.Box):
         self._listbox = Gtk.ListBox()
         self._listbox.set_selection_mode(Gtk.SelectionMode.SINGLE)
         self._listbox.add_css_class("navigation-sidebar")
+        self._listbox.set_focusable(True)
         self._listbox.connect("row-selected", self._on_row_selected)
         
         self._scrolled.set_child(self._listbox)
         self._toolbar_view.set_content(self._scrolled)
+
+        self._keyboard_controller = Gtk.EventControllerKey()
+        self._keyboard_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self._keyboard_controller.connect("key-pressed", self._on_key_pressed)
+        self._listbox.add_controller(self._keyboard_controller)
+
+        self._header_controller = Gtk.EventControllerKey()
+        self._header_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self._header_controller.connect("key-pressed", self._on_header_key_pressed)
+        add_btn.add_controller(self._header_controller)
+
+        self._menu_header_controller = Gtk.EventControllerKey()
+        self._menu_header_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        self._menu_header_controller.connect("key-pressed", self._on_header_key_pressed)
+        menu_btn.add_controller(self._menu_header_controller)
         
         # Connect to server manager signals
         server_manager.connect('server-added', self._on_server_added)
@@ -261,6 +281,69 @@ class Sidebar(Gtk.Box):
         row = self._rows.get(server_id)
         if row:
             self._listbox.select_row(row)
+
+    def popup_main_menu(self):
+        """Open the sidebar menu."""
+        if hasattr(self, "_menu_btn") and self._menu_btn:
+            self._menu_btn.grab_focus()
+            self._menu_btn.popup()
+
+    def focus_create_server(self):
+        if hasattr(self, "_add_btn") and self._add_btn:
+            self._add_btn.grab_focus()
+
+    def focus_main_menu(self):
+        if hasattr(self, "_menu_btn") and self._menu_btn:
+            self._menu_btn.grab_focus()
+
+    def focus_selected_server(self):
+        row = self._listbox.get_selected_row()
+        if row:
+            row.grab_focus()
+
+    def popup_selected_server_menu(self):
+        """Open the context menu for the selected server row."""
+        row = self._listbox.get_selected_row()
+        if not row or not isinstance(row, ServerRow):
+            return
+
+        row.grab_focus()
+
+        menu = Gio.Menu()
+        menu.append("Change Icon", f"app.change-icon::{row.server_info.id}")
+        menu.append("Rename…", f"app.rename-server::{row.server_info.id}")
+        menu.append("Delete", f"app.delete-server::{row.server_info.id}")
+
+        popover = Gtk.PopoverMenu(menu_model=menu)
+        popover.set_parent(row)
+        popover.connect("closed", lambda *_: row.grab_focus())
+        popover.popup()
+
+    def _on_key_pressed(self, controller, keyval, keycode, state):
+        selected = self._listbox.get_selected_row()
+        first_row = self._listbox.get_row_at_index(0)
+
+        if keyval == Gdk.KEY_Up and selected and selected is first_row:
+            self.focus_create_server()
+            return True
+
+        if keyval in (Gdk.KEY_Menu, Gdk.KEY_F10) and (state & Gdk.ModifierType.SHIFT_MASK or keyval == Gdk.KEY_Menu):
+            self.popup_selected_server_menu()
+            return True
+        return False
+
+    def _on_header_key_pressed(self, controller, keyval, keycode, state):
+        widget = controller.get_widget()
+        if keyval == Gdk.KEY_Right and widget is getattr(self, "_add_btn", None):
+            self.focus_main_menu()
+            return True
+        if keyval == Gdk.KEY_Left and widget is getattr(self, "_menu_btn", None):
+            self.focus_create_server()
+            return True
+        if keyval == Gdk.KEY_Down:
+            self.focus_selected_server()
+            return True
+        return False
     
     def _setup_context_menu(self):
         """Setup right-click context menu for server rows."""

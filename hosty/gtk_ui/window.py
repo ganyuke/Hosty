@@ -6,7 +6,7 @@ import threading
 import gi
 gi.require_version('Gtk', '4.0')
 gi.require_version('Adw', '1')
-from gi.repository import Gtk, Adw, GLib, GObject
+from gi.repository import Gtk, Adw, GLib, GObject, Gio, Gdk
 
 from hosty.shared.backend.playit_config import load_playit_config
 from hosty.shared.backend.server_manager import ServerManager
@@ -112,6 +112,24 @@ class HostyWindow(Adw.ApplicationWindow):
         self._quit_requested = False
         self.connect("close-request", self._on_close_request)
 
+        action_close_window = Gio.SimpleAction.new("close-window", None)
+        action_close_window.connect("activate", self._on_close_window)
+        self.add_action(action_close_window)
+
+        action_show_menu = Gio.SimpleAction.new("show-menu", None)
+        action_show_menu.connect("activate", self._on_show_menu)
+        self.add_action(action_show_menu)
+
+        shortcut_controller = Gtk.ShortcutController()
+        shortcut_controller.set_scope(Gtk.ShortcutScope.GLOBAL)
+        shortcut_controller.set_propagation_phase(Gtk.PropagationPhase.CAPTURE)
+        shortcut = Gtk.Shortcut.new(
+            Gtk.ShortcutTrigger.parse_string("F10"),
+            Gtk.NamedAction.new("win.show-menu"),
+        )
+        shortcut_controller.add_shortcut(shortcut)
+        self.add_controller(shortcut_controller)
+
     def _on_close_request(self, window):
         prefs = self._server_manager.preferences
         if prefs.run_in_background_on_close and not self._quit_requested:
@@ -137,6 +155,14 @@ class HostyWindow(Adw.ApplicationWindow):
             app._is_held_for_background = False
             
         return False # continue close
+
+    def _on_close_window(self, action, param):
+        """Close the current window."""
+        self.close()
+
+    def _on_show_menu(self, action, param):
+        """Open the primary app menu."""
+        self._sidebar.popup_main_menu()
     
     def _on_server_selected(self, sidebar, server_id):
         """Handle server selection from sidebar."""

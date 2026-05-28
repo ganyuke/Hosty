@@ -31,6 +31,7 @@ class HostyApplication(Adw.Application):
         self._activate_in_background = False
         self._is_held_for_background = False
         self._tray_manager = None
+        self._shortcuts_dialog = None
     
     def do_command_line(self, command_line):
         """Handle command line arguments."""
@@ -198,6 +199,10 @@ class HostyApplication(Adw.Application):
         action_prefs = Gio.SimpleAction.new("preferences", None)
         action_prefs.connect("activate", self._on_preferences)
         self.add_action(action_prefs)
+
+        action_shortcuts = Gio.SimpleAction.new("shortcuts", None)
+        action_shortcuts.connect("activate", self._on_shortcuts)
+        self.add_action(action_shortcuts)
         
         # Rename server (parameterized)
         action_rename = Gio.SimpleAction.new("rename-server", GLib.VariantType.new("s"))
@@ -221,9 +226,10 @@ class HostyApplication(Adw.Application):
         
         # Keyboard shortcuts
         self.set_accels_for_action("app.new-server", ["<Primary>n"])
-        self.set_accels_for_action("app.about", ["<Primary>question"])
         self.set_accels_for_action("app.preferences", ["<Primary>comma"])
-        self.set_accels_for_action("app.quit", ["<Primary>q", "<Primary>w"])
+        self.set_accels_for_action("app.shortcuts", ["<Primary>question"])
+        self.set_accels_for_action("app.quit", ["<Primary>q"])
+        self.set_accels_for_action("win.close-window", ["<Primary>w"])
     
     def _on_new_server(self, action, param):
         """Show create server dialog."""
@@ -262,6 +268,17 @@ class HostyApplication(Adw.Application):
         from hosty.gtk_ui.dialogs.preferences import show_preferences_window
         if self._window:
             show_preferences_window(self._window, self._server_manager.preferences, self._server_manager)
+
+    def _on_shortcuts(self, action, param):
+        """Show keyboard shortcuts."""
+        if not self._window:
+            return
+
+        if self._shortcuts_dialog is None:
+            from hosty.gtk_ui.dialogs.shortcuts import create_shortcuts_dialog
+            self._shortcuts_dialog = create_shortcuts_dialog()
+
+        self._shortcuts_dialog.present(self._window)
     
     def _on_rename_server(self, action, param):
         """Show rename dialog for a server."""
