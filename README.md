@@ -2,12 +2,16 @@
   <img src="packaging/linux/io.github.sugarycandybar.Hosty.svg" alt="Hosty icon" width="128" />
 </p>
 
-# Hosty - Host Minecraft servers
+<h1 align="center">Hosty</h1>
 
-[![Flathub Downloads](https://img.shields.io/flathub/downloads/io.github.sugarycandybar.Hosty?label=Flathub%20Downloads&color=brightgreen)](https://flathub.org/en/apps/io.github.sugarycandybar.Hosty)
-[![GitHub License](https://img.shields.io/github/license/sugarycandybar/Hosty?label=License&color=blue)](LICENSE)
-[![GitHub Release](https://img.shields.io/github/v/release/sugarycandybar/Hosty?label=Version&color=blue)](https://github.com/sugarycandybar/Hosty/releases)
-[![Platform](https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue?color=blue)](https://github.com/sugarycandybar/Hosty/releases)
+<p align="center">
+  Host Minecraft servers
+  <br><br>
+  <a href="https://flathub.org/en/apps/io.github.sugarycandybar.Hosty"><img src="https://img.shields.io/flathub/downloads/io.github.sugarycandybar.Hosty?label=Flathub%20Downloads&color=brightgreen"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/sugarycandybar/Hosty?label=License&color=blue"></a>
+  <a href="https://github.com/sugarycandybar/Hosty/releases"><img src="https://img.shields.io/github/v/release/sugarycandybar/Hosty?label=Version&color=blue"></a>
+  <a href="https://github.com/sugarycandybar/Hosty/releases"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue?color=blue"></a>
+</p>
 
 Hosty is a desktop app for creating, running, and managing Minecraft Fabric servers with a clean, native-style UI.
 
