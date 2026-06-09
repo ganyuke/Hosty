@@ -473,44 +473,8 @@ class PlayitManager(EventEmitter):
             return False, str(e)
 
     def install_latest_binary(self) -> tuple[bool, str]:
-        """Download and install latest playit binary for this platform."""
-        try:
-            release_url = "https://api.github.com/repos/playit-cloud/playit-agent/releases/latest"
-            req = urllib.request.Request(
-                release_url,
-                headers={"User-Agent": "Hosty/1.0", "Accept": "application/vnd.github+json"},
-            )
-            with urllib.request.urlopen(req, timeout=20.0) as resp:
-                data = json.loads(resp.read().decode("utf-8"))
-
-            assets = data.get("assets") or []
-            if not isinstance(assets, list):
-                return False, "Release assets unavailable"
-
-            asset = self._select_asset(assets)
-            if not asset:
-                return False, "No compatible playit build found for this platform"
-
-            download_url = str(asset.get("browser_download_url", "")).strip()
-            if not download_url:
-                return False, "Download URL missing"
-
-            target = self.binary_path
-            target.parent.mkdir(parents=True, exist_ok=True)
-
-            req_bin = urllib.request.Request(download_url, headers={"User-Agent": "Hosty/1.0"})
-            with urllib.request.urlopen(req_bin, timeout=120.0) as resp:
-                payload = resp.read()
-
-            with open(target, "wb") as f:
-                f.write(payload)
-
-            if sys.platform != "win32":
-                target.chmod(0o755)
-
-            return True, str(target)
-        except Exception as e:
-            return False, str(e)
+        """Download and install playit binary (pinned to v0.17.1 for compatibility)."""
+        return self._download_specific_version("v0.17.1")
 
     def _select_asset(self, assets: list[dict]) -> Optional[dict]:
         sys_name = platform.system().lower()
