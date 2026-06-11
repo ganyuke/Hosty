@@ -681,8 +681,31 @@ class CreateServerDialog(Adw.Dialog):
                     continue
                 modrinth_client.download_to(version.download_url, mods_dir / version.filename)
                 installed.add(version.filename.lower())
+                self._record_optimisation_mod_install(server_dir, version, title)
             except Exception:
                 continue
+
+    def _record_optimisation_mod_install(self, server_dir: Path, version, title: str) -> None:
+        import json
+        state_path = Path(server_dir) / ".hosty-mod-installs.json"
+        try:
+            if state_path.exists():
+                with open(state_path, encoding="utf-8") as f:
+                    state = json.load(f)
+            else:
+                state = {}
+            mods = state.setdefault("mods", {})
+            mods[version.project_id] = {
+                "title": title,
+                "version_id": version.version_id,
+                "version_number": version.version_number,
+                "filename": version.filename,
+            }
+            state_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(state_path, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+        except Exception:
+            pass
 
     def _find_supported_optimisation_version(self, modrinth_client, project_id: str, mc_version: str):
         """Return a Fabric version only when it explicitly supports the selected MC version."""
