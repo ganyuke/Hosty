@@ -32,6 +32,7 @@ class ModrinthMixin:
         except Exception:
             pass
         self._modrinth_nav.push(search_page)
+        self._modrinth_nav.connect("popped", lambda _nav, _page: self._refresh_modrinth_rows_install_state())
 
         outer_page = Adw.NavigationPage(title="Modrinth", child=self._modrinth_nav)
         self._modrinth_page = outer_page
@@ -156,6 +157,7 @@ class ModrinthMixin:
         filter_popover.set_child(popover_content)
 
         results = Gtk.ListBox()
+        self._modrinth_results_list = results
         results.set_selection_mode(Gtk.SelectionMode.NONE)
         results.add_css_class("mod-results-list")
         results.set_vexpand(True)
@@ -354,6 +356,51 @@ class ModrinthMixin:
         if needle and any(needle in n for n in installed_names):
             return True
         return False
+
+    def _installed_mod_names(self) -> set[str]:
+        root = self._server_dir()
+        if not root:
+            return set()
+        mods_dir = root / "mods"
+        if not mods_dir.is_dir():
+            return set()
+        return {p.name.lower() for p in mods_dir.glob("*.jar")}
+
+    def _refresh_modrinth_rows_install_state(self) -> None:
+        if not hasattr(self, "_modrinth_results_list"):
+            return
+        installed_names = self._installed_mod_names()
+        i = 0
+        while True:
+            row = self._modrinth_results_list.get_row_at_index(i)
+            if row is None:
+                break
+            hit = getattr(row, "_hit", None)
+            if hit is not None:
+                _set_row_btn = getattr(row, "_set_row_btn", None)
+                if _set_row_btn is None:
+                    i += 1
+                    continue
+                is_modpack = getattr(row, "_is_modpack", False)
+                is_datapack = getattr(row, "_is_datapack", False)
+                btn_label = getattr(row, "_install_btn_label", "Install")
+                best_version = getattr(row, "_best_version", [None])
+
+                if is_modpack and self._is_modpack_installed(hit.project_id):
+                    _set_row_btn("Installed", False)
+                elif is_datapack and self._is_datapack_installed(hit.project_id):
+                    _set_row_btn("Installed", False)
+                elif not is_modpack and not is_datapack:
+                    if self._looks_installed(hit, installed_names):
+                        _set_row_btn("Installed", False)
+                    else:
+                        first = best_version[0]
+                        if first and first.filename.lower() in installed_names:
+                            dependents = self._dependency_dependents(first.filename)
+                            _set_row_btn("Dependency" if dependents else "Installed", False)
+                        else:
+                            _set_row_btn(btn_label, True)
+            i += 1
 
     def _configure_known_mod_after_download(self, hit) -> None:
         if not self._server_manager or not self._server_info:
@@ -616,6 +663,11 @@ class ModrinthMixin:
         compact_install.connect("clicked", on_install)
         expanded_install.connect("clicked", on_install)
         row._hit = hit
+        row._is_modpack = is_modpack
+        row._is_datapack = is_datapack
+        row._install_btn_label = btn_label
+        row._set_row_btn = _set_row_btn
+        row._best_version = best_version
         threading.Thread(target=load_best_version, daemon=True).start()
         return row
 
@@ -842,6 +894,16 @@ class ModrinthMixin:
                 mods_dir = root / "mods"
                 mods_dir.mkdir(parents=True, exist_ok=True)
                 installed_names_local = {p.name.lower() for p in mods_dir.glob("*.jar")}
+
+                # Delete old version if replacing an existing install
+                old_state = self._read_individual_mod_state().get("mods", {}).get(hit.project_id, None)
+                if old_state:
+                    old_filename = old_state.get("filename", "")
+                    if old_filename and old_filename.lower() != chosen.filename.lower():
+                        old_path = mods_dir / old_filename
+                        if old_path.exists():
+                            old_path.unlink(missing_ok=True)
+                        installed_names_local.discard(old_filename.lower())
 
                 installed_dep_count = 0
                 for dep in deps_to_install:
@@ -1099,7 +1161,7 @@ class ModrinthMixin:
 
         version_objs: list = []
         selected_index = [0]
-        installed_names: set[str] = set()
+        installed_names: set[str] = self._installed_mod_names()
 
         def selected_version():
             if not version_objs:
@@ -1135,18 +1197,27 @@ class ModrinthMixin:
             _update_version_checkmarks()
 
             is_installed = False
+            label = btn_label
+            sensitive = True
             if is_modpack and self._is_modpack_installed(hit.project_id):
                 is_installed = True
             elif is_datapack and self._is_datapack_installed(hit.project_id):
                 is_installed = True
-            elif (not is_modpack) and (not is_datapack) and chosen.filename.lower() in installed_names:
-                is_installed = True
+            elif not is_modpack and not is_datapack:
+                installed_state = self._read_individual_mod_state().get("mods", {}).get(hit.project_id, None)
+                if installed_state:
+                    if installed_state.get("version_id", "") == chosen.version_id:
+                        is_installed = True
+                    else:
+                        label = "Replace"
+                elif chosen.filename.lower() in installed_names:
+                    is_installed = True
 
             if is_installed:
                 dependents = self._dependency_dependents(chosen.filename) if not (is_modpack or is_datapack) else []
                 _set_dbtn("Dependency" if dependents else "Installed", False)
             else:
-                _set_dbtn(btn_label, True)
+                _set_dbtn(label, sensitive)
 
         def on_version_row_activated(listbox, listbox_row):
             _apply_version_selection(listbox_row.get_index())
@@ -1301,15 +1372,24 @@ class ModrinthMixin:
         first = version_objs[0]
 
         is_installed = False
+        label = btn_label
+        sensitive = True
         if is_modpack and self._is_modpack_installed(hit.project_id):
             is_installed = True
         elif is_datapack and self._is_datapack_installed(hit.project_id):
             is_installed = True
-        elif (not is_modpack) and (not is_datapack) and first.filename.lower() in installed_names:
-            is_installed = True
+        elif not is_modpack and not is_datapack:
+            installed_state = self._read_individual_mod_state().get("mods", {}).get(hit.project_id, None)
+            if installed_state:
+                if installed_state.get("version_id", "") == first.version_id:
+                    is_installed = True
+                else:
+                    label = "Replace"
+            elif first.filename.lower() in installed_names:
+                is_installed = True
 
         if is_installed:
             dependents = self._dependency_dependents(first.filename) if not (is_modpack or is_datapack) else []
             _set_btn("Dependency" if dependents else "Installed", False)
         else:
-            _set_btn(btn_label, True)
+            _set_btn(label, sensitive)
