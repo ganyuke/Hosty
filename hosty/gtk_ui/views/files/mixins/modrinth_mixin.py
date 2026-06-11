@@ -305,6 +305,13 @@ class ModrinthMixin:
         cat_dd.connect("notify::selected", trigger_search)
         sort_dd.connect("notify::selected", trigger_search)
 
+        def close_filter_popover(*_):
+            filter_popover.popdown()
+
+        type_dd.connect("notify::selected", close_filter_popover)
+        cat_dd.connect("notify::selected", close_filter_popover)
+        sort_dd.connect("notify::selected", close_filter_popover)
+
         sw = Gtk.ScrolledWindow()
         sw.set_vexpand(True)
         sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
