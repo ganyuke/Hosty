@@ -27,3 +27,8 @@ install_data(
   'io.github.sugarycandybar.Carabiner.svg',
   install_dir: get_option('datadir') / 'icons/hicolor/scalable/apps'
 )
+
+install_data(
+  'sliders-horizontal-symbolic.svg',
+  install_dir: get_option('datadir') / 'icons/hicolor/symbolic/actions'
+)

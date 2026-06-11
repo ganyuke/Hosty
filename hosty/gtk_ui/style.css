@@ -116,13 +116,7 @@ button.playit-compact-button {
 
 .mod-card-row {
     border-radius: 12px;
-    background: alpha(currentColor, 0.04);
     padding: 0;
-    transition: background-color 150ms ease-in-out, transform 150ms ease-in-out;
-}
-
-.mod-card-row:hover {
-    background: alpha(currentColor, 0.07);
 }
 
 .modrinth-search-box {
@@ -169,15 +163,44 @@ button.playit-compact-button {
     min-width: 86px;
 }
 
+/* Fixed-size install button for compact list rows */
+.mod-install-btn-fixed {
+    min-width: 115px;
+    min-height: 34px;
+    padding: 0 8px;
+    border-radius: 9999px;
+    font-weight: 700;
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+/* Small install button for expanded list rows */
+.mod-install-btn-expanded {
+    min-width: 110px;
+    min-height: 32px;
+    padding: 0 8px;
+    border-radius: 9999px;
+    font-weight: 700;
+    background-color: @accent_bg_color;
+    color: @accent_fg_color;
+}
+
+/* Large install button for the detail page */
+.mod-install-btn-large {
+    min-width: 120px;
+    min-height: 40px;
+    font-weight: 700;
+}
+
 /* Center the back navigation button vertically in the header */
 .navigation-controls-bar button.back-button {
-    margin-top: auto;
-    margin-bottom: auto;
+    margin-top: 0;
+    margin-bottom: 0;
 }
 
 headerbar .navigation-controls-bar {
-    margin-top: auto;
-    margin-bottom: auto;
+    margin-top: 0;
+    margin-bottom: 0;
 }
 
 .mod-icon-frame {
@@ -192,6 +215,18 @@ headerbar .navigation-controls-bar {
     border-radius: 999px;
     padding: 2px 8px;
     background: alpha(currentColor, 0.08);
+}
+
+/* ===== Modrinth Detail Page ===== */
+.mod-detail-icon {
+    border-radius: 16px;
+    min-width: 80px;
+    min-height: 80px;
+}
+
+.mod-detail-section {
+    margin-top: 12px;
+    margin-bottom: 12px;
 }
 
 /* ===== Performance Cards ===== */

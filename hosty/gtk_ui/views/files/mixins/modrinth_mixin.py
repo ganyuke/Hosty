@@ -19,17 +19,30 @@ from ..utils import *
 
 class ModrinthMixin:
     def _push_modrinth_page(self, *_args) -> None:
-        page = Adw.NavigationPage(title="Modrinth", child=self._build_modrinth_page())
-        self._modrinth_page = page
+        self._modrinth_nav = Adw.NavigationView()
+        self._modrinth_nav.set_hexpand(True)
+        self._modrinth_nav.set_vexpand(True)
+
+        search_page = Adw.NavigationPage(
+            title="Modrinth",
+            child=self._build_modrinth_search_view(),
+        )
+        try:
+            search_page.set_tag("modrinth-search")
+        except Exception:
+            pass
+        self._modrinth_nav.push(search_page)
+
+        outer_page = Adw.NavigationPage(title="Modrinth", child=self._modrinth_nav)
+        self._modrinth_page = outer_page
         if self._push_fullscreen_page_cb:
-            # Push onto the outer nav to overlay the tab bar
             if self._modrinth_header:
                 self._modrinth_header.set_show_end_title_buttons(True)
-            self._push_fullscreen_page_cb(page)
+            self._push_fullscreen_page_cb(outer_page)
         else:
-            self._nav.push(page)
+            self._nav.push(outer_page)
 
-    def _build_modrinth_page(self) -> Gtk.Widget:
+    def _build_modrinth_search_view(self) -> Gtk.Widget:
         from hosty.shared.backend import modrinth_client
 
         tv = Adw.ToolbarView()
@@ -68,12 +81,8 @@ class ModrinthMixin:
 
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=10)
         outer.set_hexpand(True)
-        outer.set_margin_start(18)
-        outer.set_margin_end(18)
         outer.set_margin_top(12)
         outer.set_margin_bottom(18)
-
-        controls_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
 
         project_type_items = [
             ("Mods", "mod"),
@@ -150,20 +159,13 @@ class ModrinthMixin:
         results.set_selection_mode(Gtk.SelectionMode.NONE)
         results.add_css_class("mod-results-list")
         results.set_vexpand(True)
+        results.set_activate_on_single_click(True)
+        results.connect("row-activated", self._on_modrinth_row_activated)
+        results.set_margin_start(12)
+        results.set_margin_end(12)
 
-        prev_btn = Gtk.Button(icon_name="go-previous-symbolic")
-        prev_btn.add_css_class("flat")
-        next_btn = Gtk.Button(icon_name="go-next-symbolic")
-        next_btn.add_css_class("flat")
-        page_label = Gtk.Label(label="Page 1/1", xalign=0.0)
-        page_label.add_css_class("dim-label")
-        controls_row.append(prev_btn)
-        controls_row.append(next_btn)
-        controls_row.append(page_label)
-        outer.append(controls_row)
-
-        page_size = 10
-        state = {"offset": 0, "total": 0, "busy": False}
+        page_size = 20
+        state = {"offset": 0, "total": 0, "busy": False, "all_loaded": False}
 
         def selected_category() -> str:
             idx = int(cat_dd.get_selected())
@@ -183,17 +185,8 @@ class ModrinthMixin:
                 return "downloads"
             return sort_items[idx][1]
 
-        def update_pager():
-            total = max(0, int(state["total"]))
-            page = (state["offset"] // page_size) + 1
-            max_page = max(1, (total + page_size - 1) // page_size)
-            page_label.set_label(f"Page {page}/{max_page}")
-            prev_btn.set_sensitive((not state["busy"]) and state["offset"] > 0)
-            next_btn.set_sensitive((not state["busy"]) and (state["offset"] + page_size < total))
-
         def set_busy(busy: bool):
             state["busy"] = busy
-            # Never disable the entry itself — that steals focus and kills typing
             filter_btn.set_sensitive(not busy)
             type_dd.set_sensitive(not busy)
             cat_dd.set_sensitive(not busy)
@@ -203,7 +196,6 @@ class ModrinthMixin:
                 search_spinner.start()
             else:
                 search_spinner.stop()
-            update_pager()
 
         def update_search_hint() -> None:
             ptype = selected_project_type()
@@ -230,16 +222,23 @@ class ModrinthMixin:
                 return set()
             return {p.name.lower() for p in mods_dir.glob("*.jar")}
 
-        def finish_search(hits, total, err, version, qtxt):
+        def finish_search(hits, total, err, version, qtxt, appending: bool):
             set_busy(False)
             if err:
-                results.append(self._empty_listbox_row("Could not fetch Modrinth results."))
+                if not appending:
+                    results.append(self._empty_listbox_row("Could not fetch Modrinth results."))
                 return
             state["total"] = int(total)
-            update_pager()
+            if not appending:
+                clear_results()
             if not hits:
-                results.append(self._empty_listbox_row("No results"))
+                if not appending:
+                    results.append(self._empty_listbox_row("No results"))
+                state["all_loaded"] = True
                 return
+
+            if total <= state["offset"] + len(hits):
+                state["all_loaded"] = True
 
             installed = installed_mod_names()
             for h in hits:
@@ -248,7 +247,8 @@ class ModrinthMixin:
         def do_search(reset: bool = False):
             if reset:
                 state["offset"] = 0
-            clear_results()
+                state["all_loaded"] = False
+                clear_results()
             q = entry.get_text().strip()
             mc_version = self._server_info.mc_version if self._server_info else ""
             qtxt = q
@@ -271,34 +271,36 @@ class ModrinthMixin:
                         server_side_only=(project_type != "datapack"),
                         project_type=project_type,
                     )
-                    GLib.idle_add(lambda h=hits, t=total, v=mc_version, qq=qtxt: finish_search(h, t, None, v, qq))
+                    GLib.idle_add(
+                        lambda h=hits, t=total, v=mc_version, qq=qtxt, a=not reset: finish_search(h, t, None, v, qq, a)
+                    )
                 except Exception as ex:
-                    GLib.idle_add(lambda e=str(ex), v=mc_version, qq=qtxt: finish_search([], 0, e, v, qq))
+                    GLib.idle_add(
+                        lambda e=str(ex), v=mc_version, qq=qtxt, a=not reset: finish_search([], 0, e, v, qq, a)
+                    )
 
             threading.Thread(target=thread_fn, daemon=True).start()
 
-        def on_prev(*_):
-            if state["offset"] >= page_size:
-                state["offset"] -= page_size
-                do_search(reset=False)
+        def do_search_more(*_):
+            if state["busy"] or state["all_loaded"]:
+                return
+            state["offset"] += page_size
+            do_search(reset=False)
 
-        def on_next(*_):
-            if state["offset"] + page_size < state["total"]:
-                state["offset"] += page_size
-                do_search(reset=False)
+        def on_scroll(*_):
+            adj = sw.get_vadjustment()
+            if adj.get_upper() <= adj.get_page_size():
+                return
+            if adj.get_value() + adj.get_page_size() >= adj.get_upper() - 300:
+                do_search_more()
 
-        # Explicitly propagate events after triggering search to avoid
-        # accidentally consuming default focus handling on text widgets.
         def trigger_search(*_):
             update_search_hint()
             do_search(reset=True)
             return False
 
-        # SearchEntry has built-in clear; connect search-changed for live-as-you-type
         entry.connect("search-changed", trigger_search)
         entry.connect("activate", trigger_search)
-        prev_btn.connect("clicked", on_prev)
-        next_btn.connect("clicked", on_next)
         type_dd.connect("notify::selected", trigger_search)
         cat_dd.connect("notify::selected", trigger_search)
         sort_dd.connect("notify::selected", trigger_search)
@@ -306,12 +308,18 @@ class ModrinthMixin:
         sw = Gtk.ScrolledWindow()
         sw.set_vexpand(True)
         sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        sw.set_child(results)
+        clamp = Adw.Clamp()
+        clamp.set_child(results)
+        clamp.set_maximum_size(900)
+        sw.set_child(clamp)
+
+        adj = sw.get_vadjustment()
+        adj.connect("value-changed", on_scroll)
+
         outer.append(sw)
 
         # Run initial discovery search when opening the page.
         update_search_hint()
-        update_pager()
         GLib.idle_add(lambda: do_search(reset=True) or False)
         tv.set_content(outer)
         return tv
@@ -368,7 +376,7 @@ class ModrinthMixin:
                 endpoint = ""
             playit.configure_voicechat_mod(server_dir, self._server_info.id, endpoint=endpoint)
 
-    def _load_icon_async(self, image: Gtk.Image, url: str) -> None:
+    def _load_icon_async(self, image: Gtk.Image, url: str, size: int = 44) -> None:
         def worker():
             try:
                 from hosty.shared.backend import modrinth_client
@@ -386,7 +394,7 @@ class ModrinthMixin:
                 pixbuf = loader.get_pixbuf()
                 if not pixbuf:
                     return
-                scaled = pixbuf.scale_simple(44, 44, GdkPixbuf.InterpType.BILINEAR) or pixbuf
+                scaled = pixbuf.scale_simple(size, size, GdkPixbuf.InterpType.BILINEAR) or pixbuf
                 texture = Gdk.Texture.new_for_pixbuf(scaled)
 
                 def ui_set():
@@ -398,6 +406,12 @@ class ModrinthMixin:
 
         threading.Thread(target=worker, daemon=True).start()
 
+    def _on_modrinth_row_activated(self, listbox, listbox_row):
+        hit = getattr(listbox_row, "_hit", None)
+        if hit is not None:
+            detail_page = self._build_modrinth_detail_page(hit)
+            self._modrinth_nav.push(detail_page)
+
     def _make_modrinth_row(self, hit, mc_version: str, installed_names: set[str]) -> Gtk.ListBoxRow:
         from hosty.shared.backend import modrinth_client
 
@@ -406,139 +420,639 @@ class ModrinthMixin:
         is_datapack = ptype == "datapack"
 
         row = Gtk.ListBoxRow()
-        row.set_activatable(False)
+        row.set_activatable(True)
         row.add_css_class("mod-card-row")
         row.add_css_class("card")
-        row.set_margin_bottom(10)
+        row.set_margin_bottom(6)
 
-        outer = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-        outer.set_margin_start(14)
-        outer.set_margin_end(14)
-        outer.set_margin_top(12)
-        outer.set_margin_bottom(12)
+        btn_label = "Install"
 
-        icon = Gtk.Image.new_from_icon_name("application-x-addon-symbolic")
-        icon.set_pixel_size(44)
-        icon.set_valign(Gtk.Align.CENTER)
-        outer.append(icon)
-        if hit.icon_url:
-            self._load_icon_async(icon, hit.icon_url)
+        compact_install = Gtk.Button(label=btn_label)
+        compact_install.add_css_class("mod-install-btn-fixed")
+        compact_install.set_valign(Gtk.Align.CENTER)
+        expanded_install = Gtk.Button(label=btn_label)
+        expanded_install.add_css_class("mod-install-btn-expanded")
 
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
-        content.set_hexpand(True)
-
-        top_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-
-        title_author = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8)
-        title_author.set_hexpand(True)
-
-        title = Gtk.Label(label=hit.title, xalign=0.0)
-        title.add_css_class("title-4")
-        title.set_wrap(False)
-        title.set_ellipsize(Pango.EllipsizeMode.END)
-        title_author.append(title)
-
-        author_label = Gtk.Label(label=f"by {hit.author or 'Unknown'}", xalign=0.0)
-        author_label.add_css_class("caption")
-        author_label.add_css_class("dim-label")
-        title_author.append(author_label)
-        top_row.append(title_author)
-        content.append(top_row)
-
-        desc_text = (hit.description or "No description available.").strip()
-        desc = Gtk.Label(label=desc_text, xalign=0.0)
-        desc.set_wrap(True)
-        desc.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
-        desc.set_lines(2)
-        desc.set_ellipsize(Pango.EllipsizeMode.END)
-        desc.add_css_class("dim-label")
-        content.append(desc)
-
-        actions_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
-        actions_row.set_margin_top(4)
-
-        if is_modpack:
-            btn_label = "Install pack"
-        elif is_datapack:
-            btn_label = "Install datapack"
-        else:
-            btn_label = "Install mod"
-        install_btn = Gtk.Button(label=btn_label)
-        install_btn.add_css_class("suggested-action")
-        install_btn.add_css_class("mod-install-btn")
-        install_btn.set_halign(Gtk.Align.START)
+        row_btns = [compact_install, expanded_install]
+        def _set_row_btn(label=None, sensitive=None):
+            for b in row_btns:
+                if label is not None:
+                    b.set_label(label)
+                if sensitive is not None:
+                    b.set_sensitive(sensitive)
 
         if is_modpack and self._is_modpack_installed(hit.project_id):
-            install_btn.set_label("Installed")
-            install_btn.set_sensitive(False)
+            _set_row_btn("Installed", False)
         elif is_datapack and self._is_datapack_installed(hit.project_id):
-            install_btn.set_label("Installed")
-            install_btn.set_sensitive(False)
+            _set_row_btn("Installed", False)
         elif (not is_modpack) and (not is_datapack) and self._looks_installed(hit, installed_names):
-            install_btn.set_label("Installed")
-            install_btn.set_sensitive(False)
+            _set_row_btn("Installed", False)
 
-        actions_row.append(install_btn)
+        def _mk_text_col():
+            c = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            c.set_hexpand(True)
+            tl = Gtk.Label(label=hit.title, xalign=0.0)
+            tl.add_css_class("title-4")
+            tl.set_wrap(False)
+            tl.set_ellipsize(Pango.EllipsizeMode.END)
+            c.append(tl)
+            dl_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+            dl_i = Gtk.Image.new_from_icon_name("folder-download-symbolic")
+            dl_i.set_pixel_size(12)
+            dl_i.add_css_class("dim-label")
+            dl_box.append(dl_i)
+            dl_l = Gtk.Label(label=_format_compact_count(int(hit.downloads or 0)), xalign=0.0)
+            dl_l.add_css_class("caption")
+            dl_l.add_css_class("dim-label")
+            dl_box.append(dl_l)
+            c.append(dl_box)
+            dt = (hit.description or "").strip()
+            if dt:
+                d = Gtk.Label(label=dt, xalign=0.0)
+                d.set_wrap(True)
+                d.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+                d.set_lines(2)
+                d.set_ellipsize(Pango.EllipsizeMode.END)
+                d.add_css_class("dim-label")
+                d.add_css_class("caption")
+                c.append(d)
+            return c
 
-        # Version selection dropdown (small flat icon dropdown)
-        version_btn = Gtk.MenuButton()
-        version_btn.set_icon_name("pan-down-symbolic")
-        version_btn.add_css_class("flat")
-        version_btn.set_tooltip_text("Loading versions…")
-        version_btn.set_sensitive(False)
-        actions_row.append(version_btn)
+        def _mk_icon():
+            ic = Gtk.Image.new_from_icon_name("application-x-addon-symbolic")
+            ic.set_pixel_size(48)
+            ic.set_valign(Gtk.Align.START)
+            if hit.icon_url:
+                self._load_icon_async(ic, hit.icon_url, size=48)
+            return ic
 
-        version_popover = Gtk.Popover()
-        version_popover.set_has_arrow(True)
-        version_btn.set_popover(version_popover)
+        def _mk_chevron():
+            ch = Gtk.Image.new_from_icon_name("go-next-symbolic")
+            ch.set_pixel_size(16)
+            ch.add_css_class("dim-label")
+            ch.set_valign(Gtk.Align.CENTER)
+            return ch
+
+        compact = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        compact.set_margin_start(12)
+        compact.set_margin_end(6)
+        compact.set_margin_top(10)
+        compact.set_margin_bottom(10)
+        compact.append(_mk_icon())
+        compact.append(_mk_text_col())
+        compact.append(compact_install)
+        compact.append(_mk_chevron())
+
+        expanded = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+        expanded.set_margin_start(12)
+        expanded.set_margin_end(6)
+        expanded.set_margin_top(10)
+        expanded.set_margin_bottom(10)
+        expanded_top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        expanded_top.append(_mk_icon())
+        expanded_top.append(_mk_text_col())
+        expanded_top.append(_mk_chevron())
+        expanded.append(expanded_top)
+        expanded_actions = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
+        expanded_actions.set_margin_top(2)
+        expanded_spacer = Gtk.Box()
+        expanded_spacer.set_hexpand(True)
+        expanded_actions.append(expanded_spacer)
+        expanded_actions.append(expanded_install)
+        expanded.append(expanded_actions)
+
+        row_stack = Gtk.Stack()
+        row_stack.set_hhomogeneous(False)
+        row_stack.set_vhomogeneous(False)
+        row_stack.add_named(compact, "compact")
+        row_stack.add_named(expanded, "expanded")
+        row.set_child(row_stack)
+
+        def _tick_row(widget, fc, _ud=None):
+            w = widget.get_width()
+            cur = widget.get_visible_child_name()
+            if w >= 550 and cur != "compact":
+                widget.set_visible_child_name("compact")
+            elif w > 0 and w < 550 and cur != "expanded":
+                widget.set_visible_child_name("expanded")
+            return True
+        row_stack.add_tick_callback(_tick_row)
+
+        best_version = [None]
+
+        def on_install(*_b):
+            if self._is_running():
+                self._alert("Server is running", "Stop the server before installing mods.")
+                return
+            if not mc_version and not is_datapack:
+                self._alert("Unknown version", "Could not read Minecraft version for this server.")
+                return
+
+            chosen = best_version[0]
+            if not chosen:
+                self._alert("No compatible version", "No compatible server version is available.")
+                return
+
+            op_token = self._begin_mod_operation()
+            if not op_token:
+                self._alert("No server selected", "Select a server before installing mods.")
+                return
+
+            _set_row_btn("Installing…", False)
+            self._perform_install(hit, chosen, mc_version, row_btns, btn_label, is_modpack, is_datapack, op_token)
+
+        def load_best_version():
+            if not mc_version and not is_datapack:
+                _set_row_btn(sensitive=False)
+                return
+            try:
+                loader_for_query = "datapack" if is_datapack else "fabric"
+                versions = modrinth_client.find_compatible_versions(
+                    hit.project_id,
+                    mc_version,
+                    loader=loader_for_query,
+                    limit=1,
+                )
+                if not versions:
+                    _set_row_btn(sensitive=False)
+                    return
+
+                best_version[0] = versions[0]
+
+                def ui_update():
+                    first = best_version[0]
+                    if not first:
+                        _set_row_btn(sensitive=False)
+                        return
+
+                    is_installed = False
+                    if is_modpack and self._is_modpack_installed(hit.project_id):
+                        is_installed = True
+                    elif is_datapack and self._is_datapack_installed(hit.project_id):
+                        is_installed = True
+                    elif (not is_modpack) and (not is_datapack) and first.filename.lower() in installed_names:
+                        is_installed = True
+
+                    if is_installed:
+                        dependents = (
+                            self._dependency_dependents(first.filename) if not (is_modpack or is_datapack) else []
+                        )
+                        _set_row_btn("Dependency" if dependents else "Installed", False)
+                    else:
+                        _set_row_btn(btn_label, True)
+
+                GLib.idle_add(ui_update)
+
+            except Exception:
+                _set_row_btn(sensitive=False)
+
+        compact_install.connect("clicked", on_install)
+        expanded_install.connect("clicked", on_install)
+        row._hit = hit
+        threading.Thread(target=load_best_version, daemon=True).start()
+        return row
+
+    def _perform_install(
+        self,
+        hit,
+        chosen,
+        mc_version: str,
+        install_btns: list[Gtk.Button],
+        btn_label: str,
+        is_modpack: bool,
+        is_datapack: bool,
+        op_token: str,
+    ) -> None:
+        from hosty.shared.backend import modrinth_client
+
+        def _set_btns(label=None, sensitive=None):
+            for b in install_btns:
+                if label is not None:
+                    b.set_label(label)
+                if sensitive is not None:
+                    b.set_sensitive(sensitive)
+
+        if is_datapack:
+
+            def ui_ok_dp(fname: str, dep_count: int):
+                _set_btns("Installed", False)
+                self._record_datapack_install(
+                    hit.project_id,
+                    hit.title,
+                    chosen.version_id,
+                    chosen.filename,
+                    version_number=chosen.version_number,
+                )
+                if dep_count > 0:
+                    self._toast(f"Installed {dep_count} required dependencies")
+                self._toast(f"Installed datapack {fname}")
+                self._end_mod_operation(op_token)
+                self._rebuild_lists()
+
+            def ui_err_dp(msg: str):
+                _set_btns("Install", True)
+                self._end_mod_operation(op_token)
+                self._alert("Install failed", msg)
+
+            def install_dp_thread(deps_to_install: list):
+                try:
+                    root = self._server_dir()
+                    if not root:
+                        raise RuntimeError("No server selected.")
+                    dp_dir = self._datapacks_dir()
+                    if not dp_dir:
+                        raise RuntimeError("Could not determine datapacks folder.")
+                    dp_dir.mkdir(parents=True, exist_ok=True)
+
+                    installed_dep_count = 0
+                    for dep in deps_to_install:
+                        dep_dest = dp_dir / dep.filename
+                        modrinth_client.download_to(dep.download_url, dep_dest)
+                        self._record_datapack_install(
+                            dep.project_id,
+                            dep.name or dep.filename,
+                            dep.version_id,
+                            dep.filename,
+                            version_number=dep.version_number,
+                        )
+                        installed_dep_count += 1
+
+                    dest = dp_dir / chosen.filename
+                    modrinth_client.download_to(chosen.download_url, dest)
+                    GLib.idle_add(lambda f=chosen.filename, c=installed_dep_count: ui_ok_dp(f, c))
+                except Exception as e:
+                    GLib.idle_add(lambda m=str(e): ui_err_dp(m))
+
+            def prompt_dp_dependencies(deps_to_install: list):
+                if not deps_to_install:
+                    threading.Thread(target=install_dp_thread, args=([],), daemon=True).start()
+                    return
+
+                dep_names = [d.filename for d in deps_to_install]
+                preview = "\n".join([f"- {n}" for n in dep_names[:6]])
+                more = ""
+                if len(dep_names) > 6:
+                    more = f"\n- and {len(dep_names) - 6} more"
+
+                dialog = Adw.AlertDialog()
+                dialog.set_heading("Install required dependencies?")
+                dialog.set_body(
+                    f"This datapack requires additional dependencies:\n\n{preview}{more}\n\nInstall them as well?"
+                )
+                dialog.add_response("cancel", "Cancel")
+                dialog.add_response("install", "Install")
+                dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+                dialog.set_default_response("install")
+                dialog.set_close_response("cancel")
+
+                def on_response(_d, response):
+                    if response == "install":
+                        threading.Thread(target=install_dp_thread, args=(deps_to_install,), daemon=True).start()
+                    else:
+                        _set_btns("Install", True)
+                        self._end_mod_operation(op_token)
+
+                dialog.connect("response", on_response)
+                dialog.present(self.get_root())
+
+            def resolve_and_prompt_dp():
+                try:
+                    deps = modrinth_client.resolve_required_dependencies(
+                        chosen.version_id,
+                        mc_version,
+                        loader="datapack",
+                    )
+                    dp_state = self._read_datapack_state().get("datapacks", {})
+                    installed_ids = set(dp_state.keys())
+
+                    deps_to_install = []
+                    for dep in deps:
+                        if dep.project_id in installed_ids:
+                            continue
+                        if dep.project_id == hit.project_id:
+                            continue
+                        deps_to_install.append(dep)
+
+                    GLib.idle_add(lambda d=deps_to_install: prompt_dp_dependencies(d))
+                except Exception as e:
+                    GLib.idle_add(lambda m=str(e): ui_err_dp(m))
+
+            threading.Thread(target=resolve_and_prompt_dp, daemon=True).start()
+            return
+
+        if is_modpack:
+            _set_btns("Installing...")
+
+            def ui_ok_pack(downloaded_count: int, override_count: int, managed_mods: list[str]):
+                _set_btns("Installed", False)
+                self._record_modpack_install(
+                    hit.project_id,
+                    chosen.version_id,
+                    version_number=chosen.version_number,
+                    title=hit.title,
+                    mod_files=sorted(
+                        {
+                            str(name).strip().lower()
+                            for name in managed_mods
+                            if str(name).strip().lower().endswith(".jar")
+                        }
+                    ),
+                )
+                self._toast(f"Installed modpack ({downloaded_count} files)")
+                self._end_mod_operation(op_token)
+                self._rebuild_lists()
+
+            def ui_err_pack(msg: str):
+                if self._is_modpack_installed(hit.project_id):
+                    _set_btns("Installed", False)
+                    self._end_mod_operation(op_token)
+                    self._alert("Install failed", msg)
+                    return
+                _set_btns("Install", True)
+                self._end_mod_operation(op_token)
+                self._alert("Install failed", msg)
+
+            def ui_progress_pack(done: int, total: int):
+                if int(total) <= 0:
+                    _set_btns("Installing...")
+                else:
+                    _set_btns(f"{done}/{total}")
+
+            def install_pack_thread():
+                try:
+                    root = self._server_dir()
+                    if not root:
+                        raise RuntimeError("No server selected.")
+
+                    def on_pack_progress(d: int, t: int, rel_path: str):
+                        GLib.idle_add(lambda dd=d, tt=t: ui_progress_pack(dd, tt))
+
+                    result = modrinth_client.install_modpack(
+                        chosen.version_id,
+                        root,
+                        progress_callback=on_pack_progress,
+                    )
+                    d, o, m = (
+                        result.downloaded_files,
+                        result.extracted_override_files,
+                        result.managed_mod_files,
+                    )
+                    GLib.idle_add(lambda: ui_ok_pack(d, o, m))
+                except Exception as e:
+                    GLib.idle_add(lambda m=str(e): ui_err_pack(m))
+
+            threading.Thread(target=install_pack_thread, daemon=True).start()
+            return
+
+        def ui_ok(fname: str, dep_count: int):
+            _set_btns("Installed", False)
+            self._record_individual_mod_install(
+                hit.project_id,
+                hit.title,
+                chosen.version_id,
+                chosen.filename,
+                version_number=chosen.version_number,
+            )
+            if dep_count > 0:
+                self._toast(f"Installed {dep_count} required dependencies")
+            self._toast(f"Installed {fname}")
+            if self._is_running():
+                self._toast("Restart the server for mod changes to apply")
+            self._end_mod_operation(op_token)
+            self._rebuild_lists()
+
+        def ui_err(msg: str):
+            _set_btns("Install", True)
+            self._end_mod_operation(op_token)
+            self._alert("Install failed", msg)
+
+        def thread_fn(deps_to_install: list, all_required_deps: list):
+            try:
+                root = self._server_dir()
+                if not root:
+                    raise RuntimeError("No server selected.")
+
+                mods_dir = root / "mods"
+                mods_dir.mkdir(parents=True, exist_ok=True)
+                installed_names_local = {p.name.lower() for p in mods_dir.glob("*.jar")}
+
+                installed_dep_count = 0
+                for dep in deps_to_install:
+                    dep_name = dep.filename.lower()
+                    if dep_name in installed_names_local:
+                        continue
+                    if dep_name == chosen.filename.lower():
+                        continue
+                    dep_dest = mods_dir / dep.filename
+                    modrinth_client.download_to(dep.download_url, dep_dest)
+                    installed_names_local.add(dep_name)
+                    installed_dep_count += 1
+
+                dest = mods_dir / chosen.filename
+                modrinth_client.download_to(chosen.download_url, dest)
+                self._record_dependency_installs(chosen.filename, all_required_deps)
+                self._configure_known_mod_after_download(hit)
+                GLib.idle_add(lambda f=chosen.filename, c=installed_dep_count: ui_ok(f, c))
+            except Exception as e:
+                GLib.idle_add(lambda m=str(e): ui_err(m))
+
+        def prompt_dependencies(deps_to_install: list, all_required_deps: list):
+            if not deps_to_install:
+                threading.Thread(target=thread_fn, args=([], all_required_deps), daemon=True).start()
+                return
+
+            dep_names = [d.filename for d in deps_to_install]
+            preview = "\n".join([f"- {n}" for n in dep_names[:6]])
+            more = ""
+            if len(dep_names) > 6:
+                more = f"\n- and {len(dep_names) - 6} more"
+
+            dialog = Adw.AlertDialog()
+            dialog.set_heading("Install required dependencies?")
+            dialog.set_body(
+                f"This mod requires additional dependencies:\n\n{preview}{more}\n\nInstall them as well?"
+            )
+            dialog.add_response("cancel", "Cancel")
+            dialog.add_response("install", "Install")
+            dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
+            dialog.set_default_response("install")
+            dialog.set_close_response("cancel")
+
+            def on_response(_d, response):
+                if response == "install":
+                    threading.Thread(target=thread_fn, args=(deps_to_install, all_required_deps), daemon=True).start()
+                else:
+                    _set_btns("Install", True)
+                    self._end_mod_operation(op_token)
+
+            dialog.connect("response", on_response)
+            dialog.present(self.get_root())
+
+        def resolve_and_prompt():
+            try:
+                root = self._server_dir()
+                if not root:
+                    raise RuntimeError("No server selected.")
+
+                mods_dir = root / "mods"
+                mods_dir.mkdir(parents=True, exist_ok=True)
+                installed_names_local = {p.name.lower() for p in mods_dir.glob("*.jar")}
+                deps = modrinth_client.resolve_required_dependencies(
+                    chosen.version_id,
+                    mc_version,
+                    loader="fabric",
+                )
+                deps_to_install = []
+                for dep in deps:
+                    dep_name = dep.filename.lower()
+                    if dep_name in installed_names_local:
+                        continue
+                    if dep_name == chosen.filename.lower():
+                        continue
+                    deps_to_install.append(dep)
+
+                GLib.idle_add(lambda d=deps_to_install, a=deps: prompt_dependencies(d, a))
+            except Exception as e:
+                GLib.idle_add(lambda m=str(e): ui_err(m))
+
+        threading.Thread(target=resolve_and_prompt, daemon=True).start()
+
+    def _build_modrinth_detail_page(self, hit) -> Adw.NavigationPage:
+        from hosty.shared.backend import modrinth_client
+
+        ptype = str(getattr(hit, "project_type", "mod")).lower()
+        is_modpack = ptype == "modpack"
+        is_datapack = ptype == "datapack"
+
+        btn_label = "Install"
+
+        tv = Adw.ToolbarView()
+        tv.set_hexpand(True)
+        tv.set_vexpand(True)
+
+        header = Adw.HeaderBar()
+        header.set_show_start_title_buttons(True)
+        header.set_show_end_title_buttons(True)
+
+        tv.add_top_bar(header)
+
+        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=16)
+        content.set_margin_start(12)
+        content.set_margin_end(12)
+        content.set_margin_top(24)
+        content.set_margin_bottom(24)
+
+        mc_version = self._server_info.mc_version if self._server_info else ""
+
+        install_btn_wide = Gtk.Button(label=btn_label)
+        install_btn_wide.add_css_class("suggested-action")
+        install_btn_wide.add_css_class("mod-install-btn-large")
+        install_btn_wide.add_css_class("pill")
+        install_btn_narrow = Gtk.Button(label=btn_label)
+        install_btn_narrow.add_css_class("suggested-action")
+        install_btn_narrow.add_css_class("mod-install-btn-large")
+        install_btn_narrow.add_css_class("pill")
+        install_btn_narrow.set_halign(Gtk.Align.CENTER)
+        install_btn_narrow.set_margin_top(8)
+
+        _detail_btns = [install_btn_wide, install_btn_narrow]
+        def _set_dbtn(label=None, sensitive=None):
+            for b in _detail_btns:
+                if label is not None:
+                    b.set_label(label)
+                if sensitive is not None:
+                    b.set_sensitive(sensitive)
+
+        stats_lbl = Gtk.Label(
+            label=f"{_format_compact_count(int(hit.downloads or 0))} downloads",
+            xalign=0.0,
+        )
+        stats_lbl.add_css_class("dim-label")
+
+        icon = Gtk.Image.new_from_icon_name("application-x-addon-symbolic")
+        icon.set_pixel_size(72)
+        icon.set_valign(Gtk.Align.START)
+        if hit.icon_url:
+            self._load_icon_async(icon, hit.icon_url, size=72)
+
+        title_lbl = Gtk.Label(label=hit.title, xalign=0.0)
+        title_lbl.add_css_class("title-1")
+        title_lbl.set_wrap(True)
+        title_lbl.set_hexpand(True)
+
+        author_lbl = Gtk.Label(label=f"by {hit.author or 'Unknown'}", xalign=0.0)
+        author_lbl.add_css_class("title-4")
+        author_lbl.add_css_class("dim-label")
+
+        title_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=4)
+        title_col.set_hexpand(True)
+        title_col.append(title_lbl)
+        title_col.append(author_lbl)
+        stats_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=6)
+        stats_box.set_margin_top(4)
+        si = Gtk.Image.new_from_icon_name("folder-download-symbolic")
+        si.set_pixel_size(14)
+        stats_box.append(si)
+        stats_box.append(stats_lbl)
+        title_col.append(stats_box)
+
+        header_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=16)
+        header_row.set_hexpand(True)
+        header_row.append(icon)
+        header_row.append(title_col)
+        install_btn_wide.set_valign(Gtk.Align.START)
+        header_row.append(install_btn_wide)
+        content.append(header_row)
+
+        if hit.categories:
+            cats_box = Gtk.FlowBox()
+            cats_box.set_max_children_per_line(8)
+            cats_box.set_selection_mode(Gtk.SelectionMode.NONE)
+            cats_box.set_column_spacing(6)
+            cats_box.set_row_spacing(4)
+            for cat in hit.categories:
+                chip = Gtk.Label(label=cat)
+                chip.add_css_class("mod-chip")
+                chip.add_css_class("caption")
+                cats_box.append(chip)
+            content.append(cats_box)
+
+        content.append(install_btn_narrow)
+
+        sep = Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL)
+        sep.set_margin_top(4)
+        sep.set_margin_bottom(4)
+        content.append(sep)
+
+        desc_text = (hit.description or "No description available.").strip()
+        desc_lbl = Gtk.Label(label=desc_text, xalign=0.0)
+        desc_lbl.set_wrap(True)
+        desc_lbl.set_wrap_mode(Pango.WrapMode.WORD_CHAR)
+        desc_lbl.set_hexpand(True)
+        content.append(desc_lbl)
+
+        content.append(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL))
+
+        version_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        version_title = Gtk.Label(label="Versions", xalign=0.0)
+        version_title.add_css_class("title-3")
+        version_section.append(version_title)
 
         version_listbox = Gtk.ListBox()
         version_listbox.set_selection_mode(Gtk.SelectionMode.NONE)
         version_listbox.add_css_class("boxed-list")
-        version_listbox.set_margin_start(8)
-        version_listbox.set_margin_end(8)
-        version_listbox.set_margin_top(8)
-        version_listbox.set_margin_bottom(8)
+        loading_row = Gtk.ListBoxRow()
+        loading_row.set_activatable(False)
+        loading_lbl = Gtk.Label(label="Loading versions…", xalign=0.0, margin_top=10, margin_bottom=10)
+        loading_lbl.add_css_class("dim-label")
+        loading_row.set_child(loading_lbl)
+        version_listbox.append(loading_row)
+        version_section.append(version_listbox)
+        content.append(version_section)
 
-        popover_sw = Gtk.ScrolledWindow()
-        popover_sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        popover_sw.set_min_content_width(200)
-        popover_sw.set_min_content_height(180)
-        popover_sw.set_max_content_height(240)
-        popover_sw.set_child(version_listbox)
-        version_popover.set_child(popover_sw)
-
-        open_btn = Gtk.Button(icon_name="web-browser-symbolic")
-        open_btn.add_css_class("flat")
-        open_btn.set_tooltip_text("Open page in browser")
-        actions_row.append(open_btn)
-
-        # Spacer to push downloads stats to the right
-        spacer = Gtk.Box()
-        spacer.set_hexpand(True)
-        actions_row.append(spacer)
-
-        downloads_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=4)
-        downloads_box.set_valign(Gtk.Align.CENTER)
-        downloads_icon = Gtk.Image.new_from_icon_name("folder-download-symbolic")
-        downloads_icon.set_pixel_size(12)
-        downloads_icon.add_css_class("dim-label")
-        downloads_box.append(downloads_icon)
-        downloads_label = Gtk.Label(
-            label=_format_compact_count(int(hit.downloads or 0)),
-            xalign=1.0,
-        )
-        downloads_label.add_css_class("caption")
-        downloads_label.add_css_class("dim-label")
-        downloads_box.append(downloads_label)
-        actions_row.append(downloads_box)
-
-        content.append(actions_row)
-        outer.append(content)
-        row.set_child(outer)
-
-        version_objs = []
-        selected_index = [0]
+        open_btn = Gtk.Button(label="Open in Modrinth")
+        open_btn.add_css_class("pill")
+        open_btn.set_halign(Gtk.Align.START)
 
         def on_open_page(*_):
             slug = hit.slug or hit.project_id
@@ -550,6 +1064,35 @@ class ModrinthMixin:
                 route = "mod"
             if not _open_uri(f"https://modrinth.com/{route}/{slug}"):
                 self._alert("Could not open browser", "Unable to open the Modrinth page.")
+
+        open_btn.connect("clicked", on_open_page)
+        content.append(open_btn)
+
+        sw = Gtk.ScrolledWindow()
+        sw.set_vexpand(True)
+        sw.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(900)
+        clamp.set_child(content)
+        sw.set_child(clamp)
+        tv.set_content(sw)
+
+        install_btn_narrow.set_visible(True)
+        install_btn_wide.set_visible(False)
+        def toggle_install_btn(widget, frame_clock, _ud=None):
+            w = widget.get_width()
+            if w >= 600:
+                install_btn_wide.set_visible(True)
+                install_btn_narrow.set_visible(False)
+            elif w > 0:
+                install_btn_wide.set_visible(False)
+                install_btn_narrow.set_visible(True)
+            return True
+        sw.add_tick_callback(toggle_install_btn)
+
+        version_objs: list = []
+        selected_index = [0]
+        installed_names: set[str] = set()
 
         def selected_version():
             if not version_objs:
@@ -563,10 +1106,10 @@ class ModrinthMixin:
             idx = selected_index[0]
             i = 0
             while True:
-                row = version_listbox.get_row_at_index(i)
-                if row is None:
+                r = version_listbox.get_row_at_index(i)
+                if r is None:
                     break
-                row_box = row.get_child()
+                row_box = r.get_child()
                 if isinstance(row_box, Gtk.Box):
                     last = row_box.get_last_child()
                     if isinstance(last, Gtk.Image):
@@ -578,13 +1121,11 @@ class ModrinthMixin:
                 i += 1
 
         def _apply_version_selection(idx: int):
-            """Update UI state after user picks a version."""
             if idx < 0 or idx >= len(version_objs):
                 return
             selected_index[0] = idx
             chosen = version_objs[idx]
             _update_version_checkmarks()
-            version_popover.popdown()
 
             is_installed = False
             if is_modpack and self._is_modpack_installed(hit.project_id):
@@ -596,11 +1137,9 @@ class ModrinthMixin:
 
             if is_installed:
                 dependents = self._dependency_dependents(chosen.filename) if not (is_modpack or is_datapack) else []
-                install_btn.set_label("Dependency" if dependents else "Installed")
-                install_btn.set_sensitive(False)
+                _set_dbtn("Dependency" if dependents else "Installed", False)
             else:
-                install_btn.set_label(btn_label)
-                install_btn.set_sensitive(True)
+                _set_dbtn(btn_label, True)
 
         def on_version_row_activated(listbox, listbox_row):
             _apply_version_selection(listbox_row.get_index())
@@ -625,432 +1164,145 @@ class ModrinthMixin:
                 self._alert("No server selected", "Select a server before installing mods.")
                 return
 
-            install_btn.set_label("Installing…")
-            install_btn.set_sensitive(False)
+            _set_dbtn("Installing…", False)
+            self._perform_install(hit, chosen, mc_version, _detail_btns, btn_label, is_modpack, is_datapack, op_token)
 
-            if is_datapack:
+        install_btn_wide.connect("clicked", on_install)
+        install_btn_narrow.connect("clicked", on_install)
 
-                def ui_ok_dp(fname: str, dep_count: int):
-                    install_btn.set_label("Installed")
-                    install_btn.set_sensitive(False)
-                    self._record_datapack_install(
-                        hit.project_id,
-                        hit.title,
-                        chosen.version_id,
-                        chosen.filename,
-                        version_number=chosen.version_number,
-                    )
-                    if dep_count > 0:
-                        self._toast(f"Installed {dep_count} required dependencies")
-                    self._toast(f"Installed datapack {fname}")
-                    self._end_mod_operation(op_token)
-                    self._rebuild_lists()
-
-                def ui_err_dp(msg: str):
-                    install_btn.set_label("Install datapack")
-                    install_btn.set_sensitive(True)
-                    self._end_mod_operation(op_token)
-                    self._alert("Install failed", msg)
-
-                def install_dp_thread(deps_to_install: list):
-                    try:
-                        root = self._server_dir()
-                        if not root:
-                            raise RuntimeError("No server selected.")
-                        dp_dir = self._datapacks_dir()
-                        if not dp_dir:
-                            raise RuntimeError("Could not determine datapacks folder.")
-                        dp_dir.mkdir(parents=True, exist_ok=True)
-
-                        installed_dep_count = 0
-                        for dep in deps_to_install:
-                            dep_dest = dp_dir / dep.filename
-                            modrinth_client.download_to(dep.download_url, dep_dest)
-                            self._record_datapack_install(
-                                dep.project_id,
-                                dep.name or dep.filename,
-                                dep.version_id,
-                                dep.filename,
-                                version_number=dep.version_number,
-                            )
-                            installed_dep_count += 1
-
-                        dest = dp_dir / chosen.filename
-                        modrinth_client.download_to(chosen.download_url, dest)
-                        GLib.idle_add(lambda f=chosen.filename, c=installed_dep_count: ui_ok_dp(f, c))
-                    except Exception as e:
-                        GLib.idle_add(lambda m=str(e): ui_err_dp(m))
-
-                def prompt_dp_dependencies(deps_to_install: list):
-                    if not deps_to_install:
-                        threading.Thread(
-                            target=install_dp_thread,
-                            args=([],),
-                            daemon=True,
-                        ).start()
-                        return
-
-                    dep_names = [d.filename for d in deps_to_install]
-                    preview = "\n".join([f"- {n}" for n in dep_names[:6]])
-                    more = ""
-                    if len(dep_names) > 6:
-                        more = f"\n- and {len(dep_names) - 6} more"
-
-                    dialog = Adw.AlertDialog()
-                    dialog.set_heading("Install required dependencies?")
-                    dialog.set_body(
-                        f"This datapack requires additional dependencies:\n\n{preview}{more}\n\nInstall them as well?"
-                    )
-                    dialog.add_response("cancel", "Cancel")
-                    dialog.add_response("install", "Install")
-                    dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
-                    dialog.set_default_response("install")
-                    dialog.set_close_response("cancel")
-
-                    def on_response(_d, response):
-                        if response == "install":
-                            threading.Thread(
-                                target=install_dp_thread,
-                                args=(deps_to_install,),
-                                daemon=True,
-                            ).start()
-                        else:
-                            install_btn.set_label("Install datapack")
-                            install_btn.set_sensitive(True)
-                            self._end_mod_operation(op_token)
-
-                    dialog.connect("response", on_response)
-                    dialog.present(self.get_root())
-
-                def resolve_and_prompt_dp():
-                    try:
-                        deps = modrinth_client.resolve_required_dependencies(
-                            chosen.version_id,
-                            mc_version,
-                            loader="datapack",
-                        )
-                        dp_state = self._read_datapack_state().get("datapacks", {})
-                        installed_ids = set(dp_state.keys())
-
-                        deps_to_install = []
-                        for dep in deps:
-                            if dep.project_id in installed_ids:
-                                continue
-                            if dep.project_id == hit.project_id:
-                                continue
-                            deps_to_install.append(dep)
-
-                        GLib.idle_add(lambda d=deps_to_install: prompt_dp_dependencies(d))
-                    except Exception as e:
-                        GLib.idle_add(lambda m=str(e): ui_err_dp(m))
-
-                threading.Thread(target=resolve_and_prompt_dp, daemon=True).start()
-                return
-
-            if is_modpack:
-                install_btn.set_label("Installing...")
-
-                def ui_ok_pack(downloaded_count: int, override_count: int, managed_mods: list[str]):
-                    install_btn.set_label("Installed")
-                    install_btn.set_sensitive(False)
-                    self._record_modpack_install(
-                        hit.project_id,
-                        chosen.version_id,
-                        version_number=chosen.version_number,
-                        title=hit.title,
-                        mod_files=sorted(
-                            {
-                                str(name).strip().lower()
-                                for name in managed_mods
-                                if str(name).strip().lower().endswith(".jar")
-                            }
-                        ),
-                    )
-                    self._toast(f"Installed modpack ({downloaded_count} files)")
-                    self._end_mod_operation(op_token)
-                    self._rebuild_lists()
-
-                def ui_err_pack(msg: str):
-                    if self._is_modpack_installed(hit.project_id):
-                        install_btn.set_label("Installed")
-                        install_btn.set_sensitive(False)
-                        self._end_mod_operation(op_token)
-                        self._alert("Install failed", msg)
-                        return
-                    install_btn.set_label("Install pack")
-                    install_btn.set_sensitive(True)
-                    self._end_mod_operation(op_token)
-                    self._alert("Install failed", msg)
-
-                def ui_progress_pack(done: int, total: int):
-                    if int(total) <= 0:
-                        install_btn.set_label("Installing...")
-                    else:
-                        install_btn.set_label(f"{done}/{total}")
-
-                def install_pack_thread():
-                    try:
-                        root = self._server_dir()
-                        if not root:
-                            raise RuntimeError("No server selected.")
-
-                        def on_pack_progress(d: int, t: int, rel_path: str):
-                            GLib.idle_add(lambda dd=d, tt=t: ui_progress_pack(dd, tt))
-
-                        result = modrinth_client.install_modpack(
-                            chosen.version_id,
-                            root,
-                            progress_callback=on_pack_progress,
-                        )
-                        d, o, m = (
-                            result.downloaded_files,
-                            result.extracted_override_files,
-                            result.managed_mod_files,
-                        )
-                        GLib.idle_add(lambda: ui_ok_pack(d, o, m))
-                    except Exception as e:
-                        GLib.idle_add(lambda m=str(e): ui_err_pack(m))
-
-                threading.Thread(target=install_pack_thread, daemon=True).start()
-                return
-
-            def ui_ok(fname: str, dep_count: int):
-                install_btn.set_label("Installed")
-                install_btn.set_sensitive(False)
-                self._record_individual_mod_install(
-                    hit.project_id,
-                    hit.title,
-                    chosen.version_id,
-                    chosen.filename,
-                    version_number=chosen.version_number,
-                )
-                if dep_count > 0:
-                    self._toast(f"Installed {dep_count} required dependencies")
-                self._toast(f"Installed {fname}")
-                if self._is_running():
-                    self._toast("Restart the server for mod changes to apply")
-                self._end_mod_operation(op_token)
-                self._rebuild_lists()
-
-            def ui_err(msg: str):
-                install_btn.set_label("Install")
-                install_btn.set_sensitive(True)
-                self._end_mod_operation(op_token)
-                self._alert("Install failed", msg)
-
-            def thread_fn(deps_to_install: list, all_required_deps: list):
-                try:
-                    root = self._server_dir()
-                    if not root:
-                        raise RuntimeError("No server selected.")
-
-                    mods_dir = root / "mods"
-                    mods_dir.mkdir(parents=True, exist_ok=True)
-                    installed_names_local = {p.name.lower() for p in mods_dir.glob("*.jar")}
-
-                    installed_dep_count = 0
-                    for dep in deps_to_install:
-                        dep_name = dep.filename.lower()
-                        if dep_name in installed_names_local:
-                            continue
-                        if dep_name == chosen.filename.lower():
-                            continue
-                        dep_dest = mods_dir / dep.filename
-                        modrinth_client.download_to(dep.download_url, dep_dest)
-                        installed_names_local.add(dep_name)
-                        installed_dep_count += 1
-
-                    dest = mods_dir / chosen.filename
-                    modrinth_client.download_to(chosen.download_url, dest)
-                    self._record_dependency_installs(chosen.filename, all_required_deps)
-                    self._configure_known_mod_after_download(hit)
-                    GLib.idle_add(lambda f=chosen.filename, c=installed_dep_count: ui_ok(f, c))
-                except Exception as e:
-                    GLib.idle_add(lambda m=str(e): ui_err(m))
-
-            def prompt_dependencies(deps_to_install: list, all_required_deps: list):
-                if not deps_to_install:
-                    threading.Thread(
-                        target=thread_fn,
-                        args=([], all_required_deps),
-                        daemon=True,
-                    ).start()
-                    return
-
-                dep_names = [d.filename for d in deps_to_install]
-                preview = "\n".join([f"- {n}" for n in dep_names[:6]])
-                more = ""
-                if len(dep_names) > 6:
-                    more = f"\n- and {len(dep_names) - 6} more"
-
-                dialog = Adw.AlertDialog()
-                dialog.set_heading("Install required dependencies?")
-                dialog.set_body(
-                    f"This mod requires additional dependencies:\n\n{preview}{more}\n\nInstall them as well?"
-                )
-                dialog.add_response("cancel", "Cancel")
-                dialog.add_response("install", "Install")
-                dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
-                dialog.set_default_response("install")
-                dialog.set_close_response("cancel")
-
-                def on_response(_d, response):
-                    if response == "install":
-                        threading.Thread(
-                            target=thread_fn,
-                            args=(deps_to_install, all_required_deps),
-                            daemon=True,
-                        ).start()
-                    else:
-                        install_btn.set_label("Install")
-                        install_btn.set_sensitive(True)
-                        self._end_mod_operation(op_token)
-
-                dialog.connect("response", on_response)
-                dialog.present(self.get_root())
-
-            def resolve_and_prompt():
-                try:
-                    root = self._server_dir()
-                    if not root:
-                        raise RuntimeError("No server selected.")
-
-                    mods_dir = root / "mods"
-                    mods_dir.mkdir(parents=True, exist_ok=True)
-                    installed_names_local = {p.name.lower() for p in mods_dir.glob("*.jar")}
-                    deps = modrinth_client.resolve_required_dependencies(
-                        chosen.version_id,
-                        mc_version,
-                        loader="fabric",
-                    )
-                    deps_to_install = []
-                    for dep in deps:
-                        dep_name = dep.filename.lower()
-                        if dep_name in installed_names_local:
-                            continue
-                        if dep_name == chosen.filename.lower():
-                            continue
-                        deps_to_install.append(dep)
-
-                    GLib.idle_add(lambda d=deps_to_install, a=deps: prompt_dependencies(d, a))
-                except Exception as e:
-                    GLib.idle_add(lambda m=str(e): ui_err(m))
-
-            threading.Thread(target=resolve_and_prompt, daemon=True).start()
-
-        def load_versions():
-            if not mc_version and not is_datapack:
-
-                def ui_no_version():
-                    version_btn.set_sensitive(False)
-                    version_btn.set_tooltip_text("No server version")
-
-                GLib.idle_add(ui_no_version)
-                return
+        def load_detail():
             try:
+                project = modrinth_client.get_project(hit.project_id)
+                if project:
+                    full_desc = str(project.get("description", "") or "").strip()
+                    if full_desc and full_desc != desc_text:
+                        GLib.idle_add(desc_lbl.set_label, full_desc)
+
+                    follows = int(project.get("follows", 0))
+                    if follows:
+                        GLib.idle_add(
+                            lambda: stats_lbl.set_label(
+                                f"{_format_compact_count(int(hit.downloads or 0))} downloads · "
+                                f"{_format_compact_count(follows)} follows"
+                            )
+                        )
+
                 loader_for_query = "datapack" if is_datapack else "fabric"
-                versions = modrinth_client.find_compatible_versions(
+                all_versions = modrinth_client.find_compatible_versions(
                     hit.project_id,
                     mc_version,
                     loader=loader_for_query,
-                    limit=5,
+                    limit=20,
                 )
-                if not versions:
 
-                    def ui_no_versions():
-                        version_btn.set_sensitive(False)
-                        version_btn.set_tooltip_text("No compatible versions")
-
-                    GLib.idle_add(ui_no_versions)
-                    return
-
-                names = []
-                seen = set()
-                chosen_for_labels = []
-                for v in versions:
-                    vn = (v.version_number or v.name or "").strip()
-                    if not vn or vn in seen:
-                        continue
-                    seen.add(vn)
-                    names.append(vn)
-                    chosen_for_labels.append(v)
-
-                if not names:
-
-                    def ui_no_names():
-                        version_btn.set_sensitive(False)
-                        version_btn.set_tooltip_text("No compatible versions")
-
-                    GLib.idle_add(ui_no_names)
-                    return
-
-                version_objs.clear()
-                version_objs.extend(chosen_for_labels)
-
-                def ui_set_versions():
-                    while True:
-                        item = version_listbox.get_row_at_index(0)
-                        if item is None:
-                            break
-                        version_listbox.remove(item)
-
-                    for i, name in enumerate(names):
-                        lbl = Gtk.Label(label=name, xalign=0.0)
-                        lbl.set_hexpand(True)
-
-                        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
-                        row_box.set_margin_start(12)
-                        row_box.set_margin_end(12)
-                        row_box.set_margin_top(8)
-                        row_box.set_margin_bottom(8)
-                        row_box.append(lbl)
-
-                        if i == 0:
-                            chk = Gtk.Image.new_from_icon_name("object-select-symbolic")
-                            chk.add_css_class("accent-color")
-                            row_box.append(chk)
-
-                        item = Gtk.ListBoxRow()
-                        item.set_activatable(True)
-                        item.set_child(row_box)
-                        version_listbox.append(item)
-
-                    selected_index[0] = 0
-                    version_btn.set_sensitive(True)
-                    first = version_objs[0]
-                    first_vnum = first.version_number or first.name or "?"
-                    version_btn.set_tooltip_text(f"Selected Version: {first_vnum}")
-                    _update_version_checkmarks()
-
-                    is_installed = False
-                    if is_modpack and self._is_modpack_installed(hit.project_id):
-                        is_installed = True
-                    elif is_datapack and self._is_datapack_installed(hit.project_id):
-                        is_installed = True
-                    elif (not is_modpack) and (not is_datapack) and first.filename.lower() in installed_names:
-                        is_installed = True
-
-                    if is_installed:
-                        dependents = (
-                            self._dependency_dependents(first.filename) if not (is_modpack or is_datapack) else []
-                        )
-                        install_btn.set_label("Dependency" if dependents else "Installed")
-                        install_btn.set_sensitive(False)
-                    else:
-                        install_btn.set_label(btn_label)
-                        install_btn.set_sensitive(True)
-
-                GLib.idle_add(ui_set_versions)
-
+                GLib.idle_add(lambda: self._populate_detail_versions(
+                    version_listbox, version_objs, selected_index,
+                    all_versions, _detail_btns, btn_label,
+                    hit, is_modpack, is_datapack, installed_names,
+                    loading_row,
+                ))
             except Exception:
+                pass
 
-                def ui_failed():
-                    version_btn.set_sensitive(False)
-                    version_btn.set_tooltip_text(f"Version lookup failed: {e}")
+        threading.Thread(target=load_detail, daemon=True).start()
 
-                GLib.idle_add(ui_failed)
+        page = Adw.NavigationPage(title=hit.title, child=tv)
+        return page
 
-        open_btn.connect("clicked", on_open_page)
-        install_btn.connect("clicked", on_install)
-        threading.Thread(target=load_versions, daemon=True).start()
-        return row
+    def _populate_detail_versions(
+        self,
+        version_listbox: Gtk.ListBox,
+        version_objs: list,
+        selected_index: list,
+        versions: list,
+        install_btns: list[Gtk.Button],
+        btn_label: str,
+        hit,
+        is_modpack: bool,
+        is_datapack: bool,
+        installed_names: set[str],
+        loading_row: Gtk.ListBoxRow | None = None,
+    ) -> None:
+        def _set_btn(label=None, sensitive=None):
+            for b in install_btns:
+                if label is not None:
+                    b.set_label(label)
+                if sensitive is not None:
+                    b.set_sensitive(sensitive)
+
+        if loading_row:
+            try:
+                version_listbox.remove(loading_row)
+            except Exception:
+                pass
+
+        if not versions:
+            item = Gtk.ListBoxRow()
+            item.set_activatable(False)
+            lbl = Gtk.Label(label="No compatible versions", xalign=0.0, margin_top=8, margin_bottom=8)
+            lbl.add_css_class("dim-label")
+            item.set_child(lbl)
+            version_listbox.append(item)
+            _set_btn(sensitive=False)
+            return
+
+        names = []
+        seen = set()
+        chosen_for_labels = []
+        for v in versions:
+            vn = (v.version_number or v.name or "").strip()
+            if not vn or vn in seen:
+                continue
+            seen.add(vn)
+            names.append(vn)
+            chosen_for_labels.append(v)
+
+        version_objs.clear()
+        version_objs.extend(chosen_for_labels)
+
+        for i, name in enumerate(names):
+            lbl = Gtk.Label(label=name, xalign=0.0)
+            lbl.set_hexpand(True)
+
+            game_vers = (chosen_for_labels[i].game_versions or [])[:3]
+            gv_lbl = Gtk.Label(
+                label=", ".join(game_vers) if game_vers else "",
+                xalign=1.0,
+            )
+            gv_lbl.add_css_class("caption")
+            gv_lbl.add_css_class("dim-label")
+
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+            row_box.set_margin_start(12)
+            row_box.set_margin_end(12)
+            row_box.set_margin_top(8)
+            row_box.set_margin_bottom(8)
+            row_box.append(lbl)
+            row_box.append(gv_lbl)
+
+            if i == 0:
+                chk = Gtk.Image.new_from_icon_name("object-select-symbolic")
+                chk.add_css_class("accent-color")
+                row_box.append(chk)
+
+            item = Gtk.ListBoxRow()
+            item.set_activatable(True)
+            item.set_child(row_box)
+            version_listbox.append(item)
+
+        selected_index[0] = 0
+        first = version_objs[0]
+
+        is_installed = False
+        if is_modpack and self._is_modpack_installed(hit.project_id):
+            is_installed = True
+        elif is_datapack and self._is_datapack_installed(hit.project_id):
+            is_installed = True
+        elif (not is_modpack) and (not is_datapack) and first.filename.lower() in installed_names:
+            is_installed = True
+
+        if is_installed:
+            dependents = self._dependency_dependents(first.filename) if not (is_modpack or is_datapack) else []
+            _set_btn("Dependency" if dependents else "Installed", False)
+        else:
+            _set_btn(btn_label, True)
