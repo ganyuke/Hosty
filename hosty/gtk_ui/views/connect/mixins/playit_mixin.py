@@ -836,7 +836,10 @@ class PlayitMixin:
                         server_id, server_dir, secret=secret, auto_install=True, voicechat_port=new_port,
                     )
 
-                    if ok and endpoint and not self._has_other_server_with_tunnel_on_port("voicechat_endpoint", old_port):
+                    if (
+                        ok and endpoint
+                        and not self._has_other_server_with_tunnel_on_port("voicechat_endpoint", old_port)
+                    ):
                         self._server_manager.playit_manager._delete_tunnels_by_port(old_port, "udp")
 
                     def ui_done():

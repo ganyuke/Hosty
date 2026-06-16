@@ -781,12 +781,18 @@ class PlayitManager(EventEmitter):
             return default_port
         return default_port
 
-    def _create_tunnel(self, port: int = 25565, protocol: str = "tcp", label: str = "", tunnel_type: str | None = None) -> Tunnel | None:
+    def _create_tunnel(
+        self, port: int = 25565, protocol: str = "tcp", label: str = "",
+        tunnel_type: str | None = None,
+    ) -> Tunnel | None:
         if not (1024 <= port <= 65535):
             port = 25565
 
         if not self._check_tunnel_limit():
-            raise self.TunnelException(f"This account cannot create more than {self.max_tunnels} tunnel(s). You can increase your limit here: https://playit.gg/account/upgrade")
+            raise self.TunnelException(
+                f"This account cannot create more than {self.max_tunnels} tunnel(s). "
+                "You can increase your limit here: https://playit.gg/account/upgrade"
+            )
 
         if tunnel_type is None:
             tunnel_type = {
@@ -875,7 +881,10 @@ class PlayitManager(EventEmitter):
         except Exception:
             return False
 
-    def get_tunnel(self, port: int, protocol: str = "tcp", ensure: bool = False, label: str = "", tunnel_type: str | None = None) -> Tunnel | None:
+    def get_tunnel(
+        self, port: int, protocol: str = "tcp", ensure: bool = False,
+        label: str = "", tunnel_type: str | None = None,
+    ) -> Tunnel | None:
         self._retrieve_tunnels()
 
         for tunnel in self.tunnels.get(protocol, []):
