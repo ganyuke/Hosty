@@ -296,6 +296,18 @@ class ConnectView(Gtk.Box, LocalIpMixin, PlayersMixin, PlayitMixin):
         d.set_heading(title)
         d.set_body(body)
         d.add_response("ok", "OK")
+        import re
+        urls = re.findall(r"https?://[^\s]+", body)
+        if urls:
+            url = urls[0]
+            label = Gtk.Label(
+                label=f'<a href="{url}">Upgrade your account</a>',
+                use_markup=True,
+                halign=Gtk.Align.CENTER,
+                margin_top=8,
+            )
+            label.connect("activate-link", lambda _l, uri: Gtk.show_uri(self.get_root(), uri, Gdk.CURRENT_TIME) or True)
+            d.set_extra_child(label)
         d.present(self.get_root())
 
     def _toast(

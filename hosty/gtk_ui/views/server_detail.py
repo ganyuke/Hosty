@@ -340,105 +340,50 @@ class ServerDetailView(Gtk.Box):
         if self._view_stack.get_visible_child_name() == "files":
             self._ensure_files_view().refresh_worlds_if_changed()
 
-    def _on_port_change_confirmed(self, response: str):
-        if response != "change" or not self._current_server:
-            return
-        new_port = self._server_manager.assign_unique_port(self._current_server.id)
-        if self._toast_overlay:
-            self._toast_overlay.add_toast(Adw.Toast.new(f"Port changed to {new_port}"))
-        if self._selected_process and not self._selected_process.is_running:
-            vc_port = self._server_manager.get_voicechat_port(self._current_server.id)
-            self._server_manager.playit_manager.configure_voicechat_mod(
-                str(self._current_server.server_dir), self._current_server.id,
-                voicechat_port=vc_port,
-            )
-            self._selected_process.start()
-
-    def _find_conflicting_server_name(self, port_check_fn) -> str:
-        """Return the name of the first server that conflicts on the given port check."""
+    def _find_conflicting_server_name_for_port(self, port_type: str, port: int) -> str:
+        """Return the name of the first server that conflicts on the given port."""
         if not self._current_server:
             return "another server"
         for sid, info in self._server_manager._servers.items():
             if sid == self._current_server.id:
                 continue
-            if port_check_fn(sid):
-                cinfo = self._server_manager.get_server(sid)
-                if cinfo:
-                    return f'"{cinfo.name}"'
+            proc = self._server_manager._processes.get(sid)
+            if not proc or not proc.is_running:
+                continue
+            if port_type == "Java":
+                cfg = self._server_manager.get_config(sid)
+                if cfg:
+                    cfg.load()
+                    if cfg.get_int("server-port", 25565) == port:
+                        cinfo = self._server_manager.get_server(sid)
+                        if cinfo:
+                            return f'"{cinfo.name}"'
+            elif port_type == "Bedrock":
+                if self._server_manager.get_bedrock_port(sid) == port:
+                    cinfo = self._server_manager.get_server(sid)
+                    if cinfo:
+                        return f'"{cinfo.name}"'
+            elif port_type == "Voice Chat":
+                if self._server_manager.get_voicechat_port(sid) == port:
+                    cinfo = self._server_manager.get_server(sid)
+                    if cinfo:
+                        return f'"{cinfo.name}"'
         return "another server"
 
-    def _show_port_conflict_dialog(self, port_label: str, port: int, conflict_label: str, on_change):
-        conflict_name = "another server"
-        if port_label == "port":
-            conflict_name = self._find_conflicting_server_name(
-                lambda sid: self._server_manager.check_port_conflict(sid) == port
-            )
-        elif port_label == "bedrock port":
-            conflict_name = self._find_conflicting_server_name(
-                lambda sid: self._server_manager.get_bedrock_port(sid) == port
-            )
-        elif port_label == "Voice Chat port":
-            conflict_name = self._find_conflicting_server_name(
-                lambda sid: self._server_manager.get_voicechat_port(sid) == port
-            )
-
-        def on_conflict_response(_dialog, response):
-            if response != "change-port":
-                return
-            warn = Adw.AlertDialog.new(
-                f"Change {conflict_label.title()}?",
-                "Changing the port will change the server address. "
-                "Players will need to use the new address to connect.",
-            )
-            warn.add_response("cancel", "Cancel")
-            warn.add_response("change", "Change Port")
-            warn.set_default_response("cancel")
-            warn.set_close_response("cancel")
-            warn.connect("response", on_change)
-            warn.present(self.get_root())
-
+    def _show_port_conflict_dialog(self, port_type: str, port: int):
+        """Show a blocking dialog when a port conflict is detected."""
+        conflict_name = self._find_conflicting_server_name_for_port(port_type, port)
         dialog = Adw.AlertDialog.new(
-            "Port Conflict",
-            f"{port_label.title()} {port} is already in use by {conflict_name}. "
-            f"Choose a different port to start this server.",
+            f"{port_type} Port In Use",
+            f"{port_type} port {port} is already in use by {conflict_name}. "
+            f"A server is already running on this port.\n\n"
+            f"To change the port, open the {port_type} tunnel management dialog "
+            f"in Connect view and edit the local port.",
         )
-        dialog.add_response("cancel", "Cancel")
-        dialog.add_response("change-port", "Change Port")
-        dialog.set_default_response("change-port")
-        dialog.set_close_response("cancel")
-        dialog.connect("response", on_conflict_response)
+        dialog.add_response("ok", "OK")
+        dialog.set_default_response("ok")
+        dialog.set_close_response("ok")
         dialog.present(self.get_root())
-
-    def _on_bedrock_port_confirmed(self, response: str):
-        if response != "change" or not self._current_server:
-            return
-        new_port = self._server_manager.assign_unique_bedrock_port(self._current_server.id)
-        if self._toast_overlay:
-            self._toast_overlay.add_toast(Adw.Toast.new(f"Bedrock port changed to {new_port}"))
-        if self._selected_process and not self._selected_process.is_running:
-            self._server_manager.playit_manager.configure_geyser_mod(
-                str(self._current_server.server_dir), new_port
-            )
-            vc_port = self._server_manager.get_voicechat_port(self._current_server.id)
-            self._server_manager.playit_manager.configure_voicechat_mod(
-                str(self._current_server.server_dir), self._current_server.id,
-                voicechat_port=vc_port,
-            )
-            self._selected_process.start()
-
-    def _on_voicechat_port_confirmed(self, response: str):
-        if response != "change" or not self._current_server:
-            return
-        new_port = self._server_manager.assign_unique_voicechat_port(self._current_server.id)
-        if self._toast_overlay:
-            self._toast_overlay.add_toast(Adw.Toast.new(f"Voice Chat port changed to {new_port}"))
-        if self._selected_process and not self._selected_process.is_running:
-            vc_port = self._server_manager.get_voicechat_port(self._current_server.id)
-            self._server_manager.playit_manager.configure_voicechat_mod(
-                str(self._current_server.server_dir), self._current_server.id,
-                voicechat_port=vc_port,
-            )
-            self._selected_process.start()
 
     def _on_toggle_clicked(self, button):
         """Handle start/stop button click."""
@@ -463,40 +408,18 @@ class ServerDetailView(Gtk.Box):
             if self._current_server:
                 conflict_port = self._server_manager.check_port_conflict(self._current_server.id)
                 if conflict_port is not None:
-                    self._show_port_conflict_dialog(
-                        "port", conflict_port, "server",
-                        lambda _w, r: self._on_port_change_confirmed(r),
-                    )
+                    self._show_port_conflict_dialog("Java", conflict_port)
                     return
 
                 br_conflict = self._server_manager.check_bedrock_port_conflict(self._current_server.id)
                 if br_conflict is not None:
-                    if not self._server_manager.has_bedrock_tunnel(self._current_server.id):
-                        new_br_port = self._server_manager.assign_unique_bedrock_port(self._current_server.id)
-                        self._server_manager.playit_manager.configure_geyser_mod(
-                            str(self._current_server.server_dir), new_br_port,
-                        )
-                    else:
-                        self._show_port_conflict_dialog(
-                            "bedrock port", br_conflict, "bedrock port",
-                            lambda _w, r: self._on_bedrock_port_confirmed(r),
-                        )
-                        return
+                    self._show_port_conflict_dialog("Bedrock", br_conflict)
+                    return
 
                 vc_conflict = self._server_manager.check_voicechat_port_conflict(self._current_server.id)
                 if vc_conflict is not None:
-                    if not self._server_manager.has_voicechat_tunnel(self._current_server.id):
-                        new_vc_port = self._server_manager.assign_unique_voicechat_port(self._current_server.id)
-                        self._server_manager.playit_manager.configure_voicechat_mod(
-                            str(self._current_server.server_dir), self._current_server.id,
-                            voicechat_port=new_vc_port,
-                        )
-                    else:
-                        self._show_port_conflict_dialog(
-                            "Voice Chat port", vc_conflict, "voice chat port",
-                            lambda _w, r: self._on_voicechat_port_confirmed(r),
-                        )
-                        return
+                    self._show_port_conflict_dialog("Voice Chat", vc_conflict)
+                    return
 
                 self._server_manager.playit_manager.configure_voicechat_mod(
                     str(self._current_server.server_dir), self._current_server.id,

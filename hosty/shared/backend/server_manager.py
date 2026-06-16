@@ -1096,18 +1096,16 @@ class ServerManager(EventEmitter):
             port += 1
         return port
 
-    def assign_unique_port(self, server_id: str) -> int:
-        """Assign a non-conflicting port to a server's server.properties."""
+    def set_java_port(self, server_id: str, port: int) -> None:
+        """Set the server port in server.properties."""
         info = self._servers.get(server_id)
         if not info:
-            return 25565
-        port = self.get_next_available_port()
+            return
         cfg = self.get_config(server_id)
         if cfg:
             cfg.load()
             cfg.set_value("server-port", port)
             cfg.save()
-        return port
 
     def get_bedrock_port(self, server_id: str) -> int:
         """Read the bedrock port from the server's playit config."""
@@ -1131,33 +1129,35 @@ class ServerManager(EventEmitter):
         except Exception:
             return 24454
 
-    def assign_unique_bedrock_port(self, server_id: str) -> int:
-        """Assign a non-conflicting bedrock port and save to playit config."""
+    def set_bedrock_port(self, server_id: str, port: int) -> None:
+        """Set the bedrock port in the server's playit config."""
         info = self._servers.get(server_id)
         if not info:
-            return 19132
+            return
         from hosty.shared.backend.playit_config import save_playit_config
-        port = self.get_next_available_bedrock_port()
         cfg = load_playit_config(info.server_dir)
         cfg["bedrock_port"] = port
         save_playit_config(info.server_dir, cfg)
-        return port
 
-    def assign_unique_voicechat_port(self, server_id: str) -> int:
-        """Assign a non-conflicting voicechat port and save to playit config."""
+    def set_voicechat_port(self, server_id: str, port: int) -> None:
+        """Set the voicechat port in the server's playit config."""
         info = self._servers.get(server_id)
         if not info:
-            return 24454
+            return
         from hosty.shared.backend.playit_config import save_playit_config
-        port = self.get_next_available_voicechat_port()
         cfg = load_playit_config(info.server_dir)
         cfg["voicechat_port"] = port
         save_playit_config(info.server_dir, cfg)
-        return port
 
     def check_bedrock_port_conflict(self, server_id: str) -> int | None:
         """Return the port if another running server uses the same bedrock port."""
         port = self.get_bedrock_port(server_id)
+        if not self.has_bedrock_tunnel(server_id):
+            for sid in self._servers:
+                if sid != server_id and self.has_bedrock_tunnel(sid):
+                    break
+            else:
+                return None
         for sid, info in self._servers.items():
             if sid == server_id:
                 continue
@@ -1171,6 +1171,12 @@ class ServerManager(EventEmitter):
     def check_voicechat_port_conflict(self, server_id: str) -> int | None:
         """Return the port if another running server uses the same voicechat port."""
         port = self.get_voicechat_port(server_id)
+        if not self.has_voicechat_tunnel(server_id):
+            for sid in self._servers:
+                if sid != server_id and self.has_voicechat_tunnel(sid):
+                    break
+            else:
+                return None
         for sid, info in self._servers.items():
             if sid == server_id:
                 continue
@@ -1182,14 +1188,7 @@ class ServerManager(EventEmitter):
         return None
 
     def resolve_playit_port_conflicts(self, server_id: str) -> None:
-        """Auto-assign new bedrock/voicechat ports if they conflict with running servers."""
-        br_conflict = self.check_bedrock_port_conflict(server_id)
-        if br_conflict is not None:
-            self.assign_unique_bedrock_port(server_id)
-
-        vc_conflict = self.check_voicechat_port_conflict(server_id)
-        if vc_conflict is not None:
-            self.assign_unique_voicechat_port(server_id)
+        """No-op: port conflicts are no longer auto-resolved."""
 
     def has_bedrock_tunnel(self, server_id: str) -> bool:
         """Check if a server has a bedrock tunnel configured."""

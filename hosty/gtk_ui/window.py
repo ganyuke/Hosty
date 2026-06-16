@@ -287,16 +287,9 @@ class HostyWindow(Adw.ApplicationWindow):
                 auto_install=bool(cfg.get("auto_install", True)),
             )
             if ok:
-                self._server_manager.resolve_playit_port_conflicts(server_id)
                 fresh_cfg = self._load_playit_config(server_id)
                 br_port = int(fresh_cfg.get("bedrock_port", 19132))
                 vc_port = int(fresh_cfg.get("voicechat_port", 24454))
-                playit.auto_create_tunnel_mods(
-                    server_id, str(info.server_dir),
-                    secret=str(fresh_cfg.get("secret", "")).strip(),
-                    bedrock_port=br_port,
-                    voicechat_port=vc_port,
-                )
                 playit.verify_playit_mod_configs(
                     str(info.server_dir),
                     server_id,

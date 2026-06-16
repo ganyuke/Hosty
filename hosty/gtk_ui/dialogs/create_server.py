@@ -624,7 +624,7 @@ class CreateServerDialog(Adw.Dialog):
             config.set_value("level-seed", seed)
             config.save()
             config.set_eula(True)
-            self._server_manager.assign_unique_port(server_info.id)
+            self._server_manager.set_java_port(server_info.id, 25565)
 
             if world_import_source_path:
                 self._update_progress(0.90, "Importing world folder...")
