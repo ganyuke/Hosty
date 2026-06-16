@@ -297,6 +297,7 @@ class ConnectView(Gtk.Box, LocalIpMixin, PlayersMixin, PlayitMixin):
         d.set_body(body)
         d.add_response("ok", "OK")
         import re
+
         urls = re.findall(r"https?://[^\s]+", body)
         if urls:
             url = urls[0]

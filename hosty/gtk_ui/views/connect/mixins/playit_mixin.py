@@ -603,7 +603,10 @@ class PlayitMixin:
 
                 def run():
                     ok, msg, endpoint = self._server_manager.playit_manager.add_java_tunnel(
-                        server_id, server_dir, secret=secret, auto_install=True,
+                        server_id,
+                        server_dir,
+                        secret=secret,
+                        auto_install=True,
                     )
 
                     if ok and endpoint and not self._has_other_server_with_tunnel_on_port("java_endpoint", old_port):
@@ -711,7 +714,11 @@ class PlayitMixin:
 
                 def run():
                     ok, msg, endpoint = self._server_manager.playit_manager.add_bedrock_tunnel(
-                        server_id, server_dir, secret=secret, auto_install=True, bedrock_port=new_port,
+                        server_id,
+                        server_dir,
+                        secret=secret,
+                        auto_install=True,
+                        bedrock_port=new_port,
                     )
 
                     if ok and endpoint and not self._has_other_server_with_tunnel_on_port("bedrock_endpoint", old_port):
@@ -730,8 +737,7 @@ class PlayitMixin:
                 threading.Thread(target=run, daemon=True).start()
 
             dialog = ManagePlayitTunnelDialog(
-                "Bedrock", "Minecraft Bedrock (UDP)", br_port,
-                str(self._cfg.get("bedrock_endpoint", "")).strip()
+                "Bedrock", "Minecraft Bedrock (UDP)", br_port, str(self._cfg.get("bedrock_endpoint", "")).strip()
             )
             dialog.connect("regenerate", lambda *_: self._confirm_regenerate_tunnel("Bedrock", start_operation))
             dialog.connect("delete", lambda *_: self._on_delete_bedrock_tunnel())
@@ -825,7 +831,9 @@ class PlayitMixin:
                 self._cfg["voicechat_port"] = new_port
                 self._save_server_config()
                 self._server_manager.playit_manager.configure_voicechat_mod(
-                    server_dir, server_id, voicechat_port=new_port,
+                    server_dir,
+                    server_id,
+                    voicechat_port=new_port,
                 )
                 self._toast(f"Voice Chat port changed to {new_port}")
                 self._voicechat_in_progress = True
@@ -833,11 +841,16 @@ class PlayitMixin:
 
                 def run():
                     ok, msg, endpoint = self._server_manager.playit_manager.add_voicechat_tunnel(
-                        server_id, server_dir, secret=secret, auto_install=True, voicechat_port=new_port,
+                        server_id,
+                        server_dir,
+                        secret=secret,
+                        auto_install=True,
+                        voicechat_port=new_port,
                     )
 
                     if (
-                        ok and endpoint
+                        ok
+                        and endpoint
                         and not self._has_other_server_with_tunnel_on_port("voicechat_endpoint", old_port)
                     ):
                         self._server_manager.playit_manager._delete_tunnels_by_port(old_port, "udp")
@@ -855,8 +868,7 @@ class PlayitMixin:
                 threading.Thread(target=run, daemon=True).start()
 
             dialog = ManagePlayitTunnelDialog(
-                "Voice Chat", "Simple Voice Chat (UDP)", vc_port,
-                str(self._cfg.get("voicechat_endpoint", "")).strip()
+                "Voice Chat", "Simple Voice Chat (UDP)", vc_port, str(self._cfg.get("voicechat_endpoint", "")).strip()
             )
             dialog.connect("regenerate", lambda *_: self._confirm_regenerate_tunnel("Voice Chat", start_operation))
             dialog.connect("delete", lambda *_: self._on_delete_voicechat_tunnel())
@@ -1159,6 +1171,7 @@ class PlayitMixin:
             playit.configure_floodgate_mod(str(self._server_info.server_dir))
         elif project_id == "simple-voice-chat":
             from hosty.shared.backend.playit_config import load_playit_config
+
             vc_cfg = load_playit_config(self._server_info.server_dir)
             vc_port = int(vc_cfg.get("voicechat_port", 24454))
             playit.configure_voicechat_mod(

@@ -782,7 +782,10 @@ class PlayitManager(EventEmitter):
         return default_port
 
     def _create_tunnel(
-        self, port: int = 25565, protocol: str = "tcp", label: str = "",
+        self,
+        port: int = 25565,
+        protocol: str = "tcp",
+        label: str = "",
         tunnel_type: str | None = None,
     ) -> Tunnel | None:
         if not (1024 <= port <= 65535):
@@ -882,8 +885,12 @@ class PlayitManager(EventEmitter):
             return False
 
     def get_tunnel(
-        self, port: int, protocol: str = "tcp", ensure: bool = False,
-        label: str = "", tunnel_type: str | None = None,
+        self,
+        port: int,
+        protocol: str = "tcp",
+        ensure: bool = False,
+        label: str = "",
+        tunnel_type: str | None = None,
     ) -> Tunnel | None:
         self._retrieve_tunnels()
 
@@ -1100,9 +1107,7 @@ class PlayitManager(EventEmitter):
 
         return True, ""
 
-    def _resolve_tunnel_port(
-        self, server_dir: str, protocol: str, bedrock_port: int = 19132
-    ) -> int:
+    def _resolve_tunnel_port(self, server_dir: str, protocol: str, bedrock_port: int = 19132) -> int:
         if protocol == "tcp":
             return self._read_server_port(server_dir)
 
@@ -1739,6 +1744,7 @@ class PlayitManager(EventEmitter):
         Returns dict with "bedrock_endpoint" and "voicechat_endpoint" (empty if not created).
         """
         from hosty.shared.backend.playit_config import load_playit_config, save_playit_config
+
         result = {"bedrock_endpoint": "", "voicechat_endpoint": ""}
         cfg = load_playit_config(server_dir)
         mods_dir = Path(server_dir) / "mods"
@@ -1761,7 +1767,11 @@ class PlayitManager(EventEmitter):
                 pass
             if has_geyser:
                 ok, _msg, endpoint = self.add_bedrock_tunnel(
-                    server_id, server_dir, secret=secret, auto_install=True, bedrock_port=bedrock_port,
+                    server_id,
+                    server_dir,
+                    secret=secret,
+                    auto_install=True,
+                    bedrock_port=bedrock_port,
                 )
                 if ok and endpoint:
                     cfg["bedrock_endpoint"] = endpoint
@@ -1777,13 +1787,19 @@ class PlayitManager(EventEmitter):
         if not vc_ep:
             has_vc = False
             try:
-                has_vc = any("voice-chat" in jar.stem.lower() or "simple-voice-chat" in jar.stem.lower()
-                             for jar in mods_dir.glob("*.jar"))
+                has_vc = any(
+                    "voice-chat" in jar.stem.lower() or "simple-voice-chat" in jar.stem.lower()
+                    for jar in mods_dir.glob("*.jar")
+                )
             except Exception:
                 pass
             if has_vc:
                 ok, _msg, endpoint = self.add_voicechat_tunnel(
-                    server_id, server_dir, secret=secret, auto_install=True, voicechat_port=voicechat_port,
+                    server_id,
+                    server_dir,
+                    secret=secret,
+                    auto_install=True,
+                    voicechat_port=voicechat_port,
                 )
                 if ok and endpoint:
                     cfg["voicechat_endpoint"] = endpoint

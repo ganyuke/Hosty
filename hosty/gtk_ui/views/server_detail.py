@@ -233,8 +233,6 @@ class ServerDetailView(Gtk.Box):
         if process:
             self._selected_status_handler_id = process.connect("status-changed", self._on_selected_status_changed)
 
-
-
     def _sync_perf_with_io_process(self):
         """Perf follows the selected server's process."""
         if not self._perf_view:
@@ -422,7 +420,8 @@ class ServerDetailView(Gtk.Box):
                     return
 
                 self._server_manager.playit_manager.configure_voicechat_mod(
-                    str(self._current_server.server_dir), self._current_server.id,
+                    str(self._current_server.server_dir),
+                    self._current_server.id,
                     voicechat_port=self._server_manager.get_voicechat_port(self._current_server.id),
                 )
             self._selected_process.start()

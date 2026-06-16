@@ -1135,6 +1135,7 @@ class ServerManager(EventEmitter):
         if not info:
             return
         from hosty.shared.backend.playit_config import save_playit_config
+
         cfg = load_playit_config(info.server_dir)
         cfg["bedrock_port"] = port
         save_playit_config(info.server_dir, cfg)
@@ -1145,6 +1146,7 @@ class ServerManager(EventEmitter):
         if not info:
             return
         from hosty.shared.backend.playit_config import save_playit_config
+
         cfg = load_playit_config(info.server_dir)
         cfg["voicechat_port"] = port
         save_playit_config(info.server_dir, cfg)

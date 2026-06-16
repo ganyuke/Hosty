@@ -456,8 +456,12 @@ class ModrinthMixin:
                 endpoint = str(cfg.get("voicechat_endpoint", "")).strip()
             except Exception:
                 endpoint = ""
-            playit.configure_voicechat_mod(server_dir, self._server_info.id, endpoint=endpoint,
-                                           voicechat_port=int(cfg.get("voicechat_port", 24454)))
+            playit.configure_voicechat_mod(
+                server_dir,
+                self._server_info.id,
+                endpoint=endpoint,
+                voicechat_port=int(cfg.get("voicechat_port", 24454)),
+            )
 
     def _load_icon_async(self, image: Gtk.Image, url: str, size: int = 44) -> None:
         def worker():
