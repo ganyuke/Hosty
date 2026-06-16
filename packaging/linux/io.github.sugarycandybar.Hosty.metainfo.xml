@@ -47,8 +47,10 @@
   <releases>
     <release version="1.7.6" date="2026-06-16">
       <description>
-        <li>Added support for running multiple servers for peak mining and crafting.</li>
-        <li>Redesigned the Modrinth interface to be more user-friendly.</li>
+        <ul>
+          <li>Added support for running multiple servers for peak mining and crafting.</li>
+          <li>Redesigned the Modrinth interface to be more user-friendly.</li>
+        </ul>
       </description>
     </release>
     <release version="1.7.3" date="2026-05-24">
