@@ -8,14 +8,19 @@ import os
 import sys
 
 
+def _default_localedir() -> str:
+    """Return the default locale directory for the current environment."""
+    if os.environ.get("FLATPAK_ID"):
+        return "/app/share/locale"
+    if sys.platform == "win32" and getattr(sys, "frozen", False):
+        return os.path.join(os.path.dirname(sys.executable), "share", "locale")
+    return os.path.join(sys.prefix, "share", "locale")
+
+
 def setup_gettext(localedir: str | None = None) -> None:
     """Initialize gettext and install _() into builtins."""
     if localedir is None:
-        if sys.platform == "win32" and getattr(sys, "frozen", False):
-            base = os.path.dirname(sys.executable)
-        else:
-            base = sys.prefix
-        localedir = os.path.join(base, "share", "locale")
+        localedir = _default_localedir()
 
     try:
         gettext.bindtextdomain("hosty", localedir)
