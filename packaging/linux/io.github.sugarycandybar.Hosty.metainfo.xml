@@ -37,15 +37,15 @@
     <keyword>mc</keyword>
   </keywords>
   <branding>
-    <color type="primary" scheme_preference="light">#3cc781</color>
-    <color type="primary" scheme_preference="dark">#1a472c</color>
+    <color type="primary" scheme_preference="light">#8ecae6</color>
+    <color type="primary" scheme_preference="dark">#023047</color>
   </branding>
   <launchable type="desktop-id">io.github.sugarycandybar.Hosty.desktop</launchable>
   <url type="homepage">https://github.com/sugarycandybar/Hosty</url>
   <url type="bugtracker">https://github.com/sugarycandybar/Hosty/issues</url>
   <url type="vcs-browser">https://github.com/sugarycandybar/Hosty</url>
   <releases>
-    <release version="1.7.7" date="2026-06-20">
+    <release version="1.7.7" date="2026-06-22">
       <description>
         <p>Added Polish translation</p>
       </description>
@@ -67,31 +67,31 @@
   <content_rating type="oars-1.1"/>
   <screenshots>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/mods.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/mods.png</image>
       <caption xml:lang="en">Install and manage mods</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/connect.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/connect.png</image>
       <caption xml:lang="en">Share local servers</caption>
     </screenshot>
     <screenshot type="default">
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/console.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/console.png</image>
       <caption xml:lang="en">Server console and logs</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/properties.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/properties.png</image>
       <caption xml:lang="en">Edit server properties</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/backups.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/backups.png</image>
       <caption xml:lang="en">Create and restore backups</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/files.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/files.png</image>
       <caption xml:lang="en">Manage world files and backups</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/performance.png</image>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/performance.png</image>
       <caption xml:lang="en">Monitor server performance</caption>
     </screenshot>
   </screenshots>
