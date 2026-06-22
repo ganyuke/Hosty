@@ -14,8 +14,8 @@ from pathlib import Path
 
 from gi.repository import Adw, Gdk, Gio, GLib, Gtk
 
-from hosty.gtk_ui.window import HostyWindow
 from hosty.i18n import setup_gettext
+from hosty.gtk_ui.window import HostyWindow
 from hosty.shared.backend.server_manager import ServerManager
 from hosty.shared.core.events import set_main_thread_dispatcher
 from hosty.shared.utils.constants import APP_ID

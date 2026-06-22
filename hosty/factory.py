@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
+import hosty.i18n  # noqa: F401 — installs _() into builtins early
+
 
 class HostyApp(Protocol):
     """Common interface for app frontends."""
