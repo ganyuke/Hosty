@@ -45,6 +45,11 @@
   <url type="bugtracker">https://github.com/sugarycandybar/Hosty/issues</url>
   <url type="vcs-browser">https://github.com/sugarycandybar/Hosty</url>
   <releases>
+    <release version="1.7.7" date="2026-06-20">
+      <description>
+        <p>Added Polish translation</p>
+      </description>
+    </release>
     <release version="1.7.6" date="2026-06-16">
       <description>
         <ul>
@@ -58,24 +63,13 @@
         <p>Playit agent fix</p>
       </description>
     </release>
-    <release version="1.7.2" date="2026-05-21">
-      <description>
-        <p>Ported to windows</p>
-      </description>
-    </release>
-    <release version="1.7.1" date="2026-05-17">
-      <description>
-        <p>Removed server RAM limits.</p>
-      </description>
-    </release>
-    <release version="1.7.0" date="2026-05-11">
-      <description>
-        <p>Added support for updating server version; improved bedrock support.</p>
-      </description>
-    </release>
   </releases>
   <content_rating type="oars-1.1"/>
   <screenshots>
+    <screenshot>
+      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/mods.png</image>
+      <caption xml:lang="en">Install and manage mods</caption>
+    </screenshot>
     <screenshot>
       <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/connect.png</image>
       <caption xml:lang="en">Share local servers</caption>
@@ -95,10 +89,6 @@
     <screenshot>
       <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/files.png</image>
       <caption xml:lang="en">Manage world files and backups</caption>
-    </screenshot>
-    <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/mods.png</image>
-      <caption xml:lang="en">Install and manage mods</caption>
     </screenshot>
     <screenshot>
       <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/2ddb2d7117b185c6ebfbca7dbfc9c8be9c502317/packaging/linux/screenshots/performance.png</image>
