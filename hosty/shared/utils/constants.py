@@ -10,10 +10,10 @@ from pathlib import Path
 from hosty.version import __version__
 
 # Application identity
-APP_ID = "io.github.sugarycandybar.Hosty"
-APP_NAME = "Hosty"
+APP_ID = "io.github.ganyuke.Hosty"
+APP_NAME = "Hosty Extended"
 APP_VERSION = __version__
-APP_WEBSITE = "https://github.com/sugarycandybar/Hosty"
+APP_WEBSITE = "https://github.com/ganyuke/Hosty"
 
 # Directories
 
@@ -23,13 +23,13 @@ def _default_data_dir() -> Path:
     if sys.platform == "win32":
         local_app_data = os.environ.get("LOCALAPPDATA")
         if local_app_data:
-            return Path(local_app_data) / "Hosty"
-        return Path.home() / "AppData" / "Local" / "Hosty"
+            return Path(local_app_data) / "Hosty Extended"
+        return Path.home() / "AppData" / "Local" / "Hosty Extended"
 
     if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support" / "Hosty"
+        return Path.home() / "Library" / "Application Support" / "Hosty Extended"
 
-    return Path.home() / ".local" / "share" / "hosty"
+    return Path.home() / ".local" / "share" / "hosty extended"
 
 
 DATA_DIR = Path(os.environ.get("HOSTY_DATA_DIR", _default_data_dir()))
@@ -53,7 +53,7 @@ MOJANG_VERSION_MANIFEST = "https://launchermeta.mojang.com/mc/game/version_manif
 
 # PaperMC Fill v3
 PAPER_FILL_API = "https://fill.papermc.io/v3/projects/paper"
-PAPER_USER_AGENT = "Hosty/1.0 (+https://github.com/sugarycandybar/Hosty)"
+PAPER_USER_AGENT = f"{APP_NAME}/{APP_VERSION} (+{APP_WEBSITE})"
 
 # Purpur
 PURPUR_API_BASE = "https://api.purpurmc.org/v2/purpur"

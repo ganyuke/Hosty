@@ -12,7 +12,7 @@ from threading import Thread
 
 kernel32 = ctypes.windll.kernel32
 
-EVENT_NAME = "io.github.sugarycandybar.Hosty-SingleInstance"
+EVENT_NAME = "io.github.ganyuke.Hosty-SingleInstance"
 EVENT_MODIFY_STATE = 0x0002
 SYNCHRONIZE = 0x00100000
 WAIT_OBJECT_0 = 0

@@ -1,4 +1,4 @@
-app-id: io.github.sugarycandybar.Hosty
+app-id: io.github.ganyuke.Hosty
 runtime: org.gnome.Platform
 runtime-version: "50"
 sdk: org.gnome.Sdk

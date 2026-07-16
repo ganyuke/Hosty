@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <component type="desktop-application">
-  <id>io.github.sugarycandybar.Hosty</id>
-  <name>Hosty</name>
+  <id>io.github.ganyuke.Hosty</id>
+  <name>Hosty Extended</name>
   <summary>Host Minecraft servers</summary>
   <metadata_license>CC0-1.0</metadata_license>
   <project_license>GPL-3.0-or-later</project_license>
@@ -40,10 +40,10 @@
     <color type="primary" scheme_preference="light">#ffe9be</color>
     <color type="primary" scheme_preference="dark">#3d2516</color>
   </branding>
-  <launchable type="desktop-id">io.github.sugarycandybar.Hosty.desktop</launchable>
-  <url type="homepage">https://github.com/sugarycandybar/Hosty</url>
-  <url type="bugtracker">https://github.com/sugarycandybar/Hosty/issues</url>
-  <url type="vcs-browser">https://github.com/sugarycandybar/Hosty</url>
+  <launchable type="desktop-id">io.github.ganyuke.Hosty.desktop</launchable>
+  <url type="homepage">https://github.com/ganyuke/Hosty</url>
+  <url type="bugtracker">https://github.com/ganyuke/Hosty/issues</url>
+  <url type="vcs-browser">https://github.com/ganyuke/Hosty</url>
   <releases>
     <release version="1.7.7" date="2026-06-22">
       <description>
@@ -71,7 +71,7 @@
       <caption xml:lang="en">Install and manage mods</caption>
     </screenshot>
     <screenshot>
-      <image type="source">https://raw.githubusercontent.com/sugarycandybar/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/connect.png</image>
+      <image type="source">https://raw.githubusercontent.com/ganyuke/Hosty/44a7af7230679797fbb18bf620351da048303eeb/packaging/linux/screenshots/connect.png</image>
       <caption xml:lang="en">Share local servers</caption>
     </screenshot>
     <screenshot type="default">
