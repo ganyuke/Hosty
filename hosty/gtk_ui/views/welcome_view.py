@@ -63,7 +63,7 @@ class WelcomeView(Gtk.Box):
         content.append(title)
 
         description = Gtk.Label(
-            label=_("Create and manage your Fabric Minecraft servers\nwith an easy-to-use interface.")
+            label=_("Create and manage your Minecraft servers\nwith an easy-to-use interface.")
         )
         description.set_justify(Gtk.Justification.CENTER)
         description.set_wrap(True)

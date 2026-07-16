@@ -12,6 +12,7 @@ gi.require_version("Adw", "1")
 from gi.repository import Adw, GLib, Gtk
 
 from hosty.shared.backend.config_manager import ConfigManager
+from hosty.shared.backend.platforms import Platform, loader_row_title, platform_label, server_subtitle
 from hosty.shared.backend.server_manager import ServerInfo, ServerManager
 from hosty.shared.utils.constants import (
     DEFAULT_RAM_MB,
@@ -262,7 +263,9 @@ class PropertiesView(Gtk.Box):
         self._server_info = server_info
 
         if self._server_info and hasattr(self, "_version_row"):
-            version_text = self._server_info.mc_version or _("Unknown")
+            from hosty.shared.backend.platforms import platform_label
+
+            version_text = server_subtitle(self._server_info.platform, self._server_info.mc_version)
             if self._server_info.loader_version:
                 version_text += f" ({self._server_info.loader_version})"
             self._version_row.set_subtitle(version_text)
@@ -279,7 +282,9 @@ class PropertiesView(Gtk.Box):
         self._change_version_btn.set_tooltip_text(_("Checking for newer Minecraft versions..."))
 
         def worker():
-            versions = self._server_manager.download_manager.fetch_game_versions()
+            versions = self._server_manager.download_manager.fetch_platform_game_versions(
+                self._server_info.platform
+            )
             current = self._server_info.mc_version
             has_upgrade = any(ServerManager.is_version_after(v, current) for v in versions)
 
@@ -330,7 +335,7 @@ class PropertiesView(Gtk.Box):
         runtime_group.add(mc_row)
 
         fabric_version_row = Adw.ActionRow(
-            title=_("Fabric loader"),
+            title=loader_row_title(self._server_info.platform),
             subtitle=_("Loading..."),
         )
         fabric_version_row.set_activatable(False)
@@ -402,9 +407,34 @@ class PropertiesView(Gtk.Box):
 
         def validate(*_args):
             update_java_info(selected_mc_version())
-            primary_btn.set_sensitive(bool(mc_values) and bool(loader_values))
+            mc_version = selected_mc_version()
+            if self._server_info.platform == Platform.SPIGOT.value:
+                primary_btn.set_sensitive(bool(mc_values) and bool(mc_version))
+            else:
+                primary_btn.set_sensitive(bool(mc_values) and bool(loader_values))
 
-        mc_row.connect("notify::selected", validate)
+        def on_mc_changed_for_builds(*_args):
+            mc_version = selected_mc_version()
+            update_java_info(mc_version)
+            if not mc_version:
+                return
+            if self._server_info.platform == Platform.SPIGOT.value:
+                loader_values.clear()
+                loader_values.append(mc_version)
+                selected_loader["value"] = mc_version
+                fabric_version_row.set_subtitle(_("BuildTools for {}").format(mc_version))
+            else:
+                builds = self._server_manager.download_manager.fetch_platform_build_versions(
+                    self._server_info.platform, mc_version
+                )
+                loader_values.clear()
+                loader_values.extend(builds)
+                if builds:
+                    selected_loader["value"] = builds[0]
+                    fabric_version_row.set_subtitle(builds[0])
+            validate()
+
+        mc_row.connect("notify::selected", on_mc_changed_for_builds)
 
         def on_cancel(*_args):
             visible = stack.get_visible_child_name()
@@ -443,24 +473,23 @@ class PropertiesView(Gtk.Box):
             add_review_row(expander)
 
         def versions_worker():
-            games = self._server_manager.download_manager.fetch_game_versions()
-            loaders = self._server_manager.download_manager.fetch_loader_versions()
+            platform = self._server_info.platform
+            games = self._server_manager.download_manager.fetch_platform_game_versions(platform)
+            current_mc = self._server_info.mc_version
+            next_games = [v for v in games if ServerManager.is_version_after(v, current_mc)]
 
             def loaded():
-                current_mc = self._server_info.mc_version
                 current_loader = self._server_info.loader_version
-                next_games = [v for v in games if ServerManager.is_version_after(v, current_mc)]
-                next_loaders = [
-                    v for v in loaders if not current_loader or ServerManager.is_version_at_least(v, current_loader)
-                ]
                 mc_values.clear()
                 mc_values.extend(next_games)
                 loader_values.clear()
-                loader_values.extend(next_loaders)
                 mc_row.set_model(Gtk.StringList.new(mc_values or [_("No versions found")]))
                 if mc_values:
                     mc_row.set_selected(0)
-                # Automatically use the newest loader (first in list)
+                    builds = self._server_manager.download_manager.fetch_platform_build_versions(
+                        platform, mc_values[0]
+                    )
+                    loader_values.extend(builds)
                 if loader_values:
                     selected_loader["value"] = loader_values[0]
                     fabric_version_row.set_subtitle(loader_values[0])
@@ -468,6 +497,22 @@ class PropertiesView(Gtk.Box):
                 return False
 
             GLib.idle_add(loaded)
+
+        def on_mc_changed_for_builds(*_args):
+            mc_version = selected_mc_version()
+            if not mc_version:
+                return
+            builds = self._server_manager.download_manager.fetch_platform_build_versions(
+                self._server_info.platform, mc_version
+            )
+            loader_values.clear()
+            loader_values.extend(builds)
+            if builds:
+                selected_loader["value"] = builds[0]
+                fabric_version_row.set_subtitle(builds[0])
+            validate()
+
+        mc_row.connect("notify::selected", on_mc_changed_for_builds)
 
         def show_mod_review(*_args):
             if not mc_values or not loader_values:
@@ -506,6 +551,7 @@ class PropertiesView(Gtk.Box):
                         [
                             *compatible.get("modpacks", []),
                             *compatible.get("mods", []),
+                            *compatible.get("plugins", []),
                             *compatible.get("datapacks", []),
                         ],
                         _("No tracked compatible items found"),
@@ -515,6 +561,7 @@ class PropertiesView(Gtk.Box):
                         [
                             *incompatible.get("modpacks", []),
                             *incompatible.get("mods", []),
+                            *incompatible.get("plugins", []),
                             *incompatible.get("datapacks", []),
                         ],
                         _("No incompatible items found"),
@@ -522,6 +569,7 @@ class PropertiesView(Gtk.Box):
                     unknown_items = [
                         *unknown.get("modpacks", []),
                         *unknown.get("mods", []),
+                        *unknown.get("plugins", []),
                         *unknown.get("datapacks", []),
                     ]
                     if unknown_items:

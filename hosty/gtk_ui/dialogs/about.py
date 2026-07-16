@@ -20,7 +20,7 @@ def show_about_dialog(parent):
     about.set_developer_name("Sugarycandybar")
     about.set_license_type(Gtk.License.GPL_3_0)
     about.set_comments(
-        _("A modern application for creating, running, and managing Fabric Minecraft servers with ease.")
+        _("A modern application for creating, running, and managing Minecraft servers (Fabric, NeoForge, Spigot, Paper, Purpur) with ease.")
     )
     about.set_website(APP_WEBSITE)
     about.set_issue_url(APP_WEBSITE + "/issues")

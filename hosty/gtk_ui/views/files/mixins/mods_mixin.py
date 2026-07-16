@@ -68,6 +68,114 @@ class ModsMixin:
             return None
         return root / ".hosty-datapack-installs.json"
 
+    def _plugin_state_path(self) -> Path | None:
+        root = self._server_dir()
+        if not root:
+            return None
+        return root / ".hosty-plugin-installs.json"
+
+    def _server_platform(self) -> str:
+        from hosty.shared.backend.platforms import Platform, normalize_platform
+
+        if not self._server_info:
+            return Platform.FABRIC.value
+        return normalize_platform(self._server_info.platform).value
+
+    def _modrinth_loader(self) -> str:
+        from hosty.shared.backend.platforms import modrinth_loader
+
+        return modrinth_loader(self._server_platform())
+
+    def _content_dir_name(self) -> str:
+        from hosty.shared.backend.platforms import content_dir_name
+
+        return content_dir_name(self._server_platform())
+
+    def _content_dir(self) -> Path | None:
+        root = self._server_dir()
+        if not root:
+            return None
+        path = root / self._content_dir_name()
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    def _is_mod_server(self) -> bool:
+        from hosty.shared.backend.platforms import is_mod_platform
+
+        return is_mod_platform(self._server_platform())
+
+    def _is_plugin_server(self) -> bool:
+        from hosty.shared.backend.platforms import is_plugin_platform
+
+        return is_plugin_platform(self._server_platform())
+
+    def _read_plugin_state(self) -> dict:
+        path = self._plugin_state_path()
+        if not path or not path.exists():
+            return {"plugins": {}}
+        try:
+            with open(path, encoding="utf-8") as f:
+                raw = json.load(f)
+            if not isinstance(raw, dict):
+                return {"plugins": {}}
+            plugin_raw = raw.get("plugins") if isinstance(raw.get("plugins"), dict) else {}
+            cleaned: dict[str, dict[str, str]] = {}
+            for project_id, item in plugin_raw.items():
+                pid = str(project_id).strip()
+                if not pid or not isinstance(item, dict):
+                    continue
+                filename = str(item.get("filename", "")).strip()
+                if not filename:
+                    continue
+                cleaned[pid] = {
+                    "title": str(item.get("title", "")).strip(),
+                    "version_id": str(item.get("version_id", "")).strip(),
+                    "version_number": str(item.get("version_number", "")).strip(),
+                    "filename": filename,
+                }
+            return {"plugins": cleaned}
+        except Exception:
+            return {"plugins": {}}
+
+    def _write_plugin_state(self, state: dict) -> bool:
+        path = self._plugin_state_path()
+        if not path:
+            return False
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(state, f, indent=2)
+            return True
+        except Exception:
+            return False
+
+    def _record_plugin_install(
+        self,
+        project_id: str,
+        title: str,
+        version_id: str,
+        filename: str,
+        version_number: str = "",
+    ) -> None:
+        pid = str(project_id).strip()
+        if not pid:
+            return
+        state = self._read_plugin_state()
+        plugins = state.setdefault("plugins", {})
+        plugins[pid] = {
+            "title": str(title or "").strip(),
+            "version_id": str(version_id or "").strip(),
+            "version_number": str(version_number or "").strip(),
+            "filename": str(filename or "").strip(),
+        }
+        self._write_plugin_state(state)
+
+    def _is_plugin_installed(self, project_id: str) -> bool:
+        pid = str(project_id).strip()
+        if not pid:
+            return False
+        return pid in self._read_plugin_state().get("plugins", {})
+
     def _datapacks_dir(self) -> Path | None:
         """Return the active datapacks directory (world/datapacks), creating parent if needed."""
         root = self._server_dir()
@@ -85,7 +193,9 @@ class ModsMixin:
                         break
             except Exception:
                 pass
-        return root / world_name / "datapacks"
+        path = root / world_name / "datapacks"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _read_datapack_state(self) -> dict:
         path = self._datapack_state_path()
@@ -714,12 +824,13 @@ class ModsMixin:
         # Try to find metadata for this jar
         filename_lower = jar.name.lower()
         mod_state = self._read_individual_mod_state().get("mods", {})
+        plugin_state = self._read_plugin_state().get("plugins", {})
 
         project_id = None
         version_id = None
         version_number = None
         mod_title = None
-        for pid, meta in mod_state.items():
+        for pid, meta in {**mod_state, **plugin_state}.items():
             if str(meta.get("filename", "")).lower() == filename_lower:
                 project_id = pid
                 version_id = meta.get("version_id")
@@ -743,10 +854,11 @@ class ModsMixin:
         row.set_activatable(False)
 
         if project_id:
+            route = "plugin" if project_id in plugin_state else "mod"
             open_btn = self._icon_button(
                 "web-browser-symbolic",
-                _("Open mod page"),
-                lambda *_p, pid=project_id: _open_uri(f"https://modrinth.com/mod/{pid}"),
+                _("Open mod page") if route == "mod" else _("Open plugin page"),
+                lambda *_p, pid=project_id, r=route: _open_uri(f"https://modrinth.com/{r}/{pid}"),
             )
             row.add_suffix(open_btn)
 
@@ -904,9 +1016,13 @@ class ModsMixin:
             from hosty.shared.backend import modrinth_client
 
             mc_version = self._server_info.mc_version if self._server_info else ""
-            modpack_entries = self._modpack_entries()
-            managed_mods = set(self._modpack_managed_mod_map().keys())
-            individual_state = self._read_individual_mod_state().get("mods", {})
+            loader = self._modrinth_loader()
+            modpack_entries = self._modpack_entries() if self._is_mod_server() else {}
+            managed_mods = set(self._modpack_managed_mod_map().keys()) if self._is_mod_server() else set()
+            individual_state = (
+                self._read_individual_mod_state().get("mods", {}) if self._is_mod_server() else {}
+            )
+            plugin_state = self._read_plugin_state().get("plugins", {}) if self._is_plugin_server() else {}
             datapack_state = self._read_datapack_state().get("datapacks", {})
 
             refresh_needed = False
@@ -937,7 +1053,8 @@ class ModsMixin:
                 latest = modrinth_client.find_compatible_version(
                     project_id,
                     mc_version,
-                    loader="fabric",
+                    loader=loader,
+                    project_type="mod",
                 )
                 if not latest:
                     continue
@@ -971,7 +1088,7 @@ class ModsMixin:
                 deps = modrinth_client.resolve_required_dependencies(
                     latest.version_id,
                     mc_version,
-                    loader="fabric",
+                    loader=loader,
                 )
                 dep_hits_modpack = any(str(dep.filename).strip().lower() in managed_mods for dep in deps)
                 if dep_hits_modpack:
@@ -979,6 +1096,21 @@ class ModsMixin:
                     continue
 
                 standalone_updates.append((project_id, meta, latest, deps))
+
+            plugin_updates = []
+            for project_id, meta in plugin_state.items():
+                current_version = str((meta or {}).get("version_id", "")).strip()
+                latest = modrinth_client.find_compatible_version(
+                    project_id,
+                    mc_version,
+                    loader=loader,
+                    project_type="plugin",
+                )
+                if not latest:
+                    continue
+                if str(latest.version_id).strip() == current_version:
+                    continue
+                plugin_updates.append((project_id, meta, latest))
 
             # Check datapack updates (datapacks have no loader requirement)
             datapack_updates = []
@@ -1022,7 +1154,7 @@ class ModsMixin:
                 GLib.idle_add(self._rebuild_lists)
 
             def show_result():
-                total_updates = len(modpack_updates) + len(standalone_updates) + len(datapack_updates)
+                total_updates = len(modpack_updates) + len(standalone_updates) + len(plugin_updates) + len(datapack_updates)
                 if total_updates == 0:
                     self._mods_update_busy = False
                     self._set_mod_update_row_subtitle(_("Update check complete"))
@@ -1055,6 +1187,17 @@ class ModsMixin:
                     if len(standalone_updates) > 14:
                         lines.append(_("- and {} more mods").format(len(standalone_updates) - 14))
 
+                if plugin_updates:
+                    if lines:
+                        lines.append("")
+                    lines.append(_("Plugins:"))
+                    for pid, meta, newer in plugin_updates[:14]:
+                        title = str((meta or {}).get("title", "")).strip() or pid
+                        vn = str(newer.version_number or newer.version_id)
+                        lines.append(_("- {} -> {}").format(title, vn))
+                    if len(plugin_updates) > 14:
+                        lines.append(_("- and {} more plugins").format(len(plugin_updates) - 14))
+
                 if datapack_updates:
                     if lines:
                         lines.append("")
@@ -1075,6 +1218,8 @@ class ModsMixin:
                             len(modpack_updates), len(standalone_updates)
                         )
                     )
+                if plugin_updates:
+                    body_parts.append(_("Found {} plugin update(s).").format(len(plugin_updates)))
                 if datapack_updates:
                     body_parts.append(_("Found {} datapack update(s).").format(len(datapack_updates)))
                 if blocked > 0:
@@ -1110,13 +1255,16 @@ class ModsMixin:
 
                     self._set_mod_update_row_subtitle(_("Updating mods..."))
                     self._toast(
-                        _("Updating {} modpack(s), {} mod(s), and {} datapack(s)").format(
-                            len(modpack_updates), len(standalone_updates), len(datapack_updates)
+                        _("Updating {} modpack(s), {} mod(s), {} plugin(s), and {} datapack(s)").format(
+                            len(modpack_updates),
+                            len(standalone_updates),
+                            len(plugin_updates),
+                            len(datapack_updates),
                         )
                     )
                     threading.Thread(
                         target=self._apply_mod_updates,
-                        args=(modpack_updates, standalone_updates, op_token, datapack_updates),
+                        args=(modpack_updates, standalone_updates, op_token, datapack_updates, plugin_updates),
                         daemon=True,
                     ).start()
 
@@ -1134,6 +1282,7 @@ class ModsMixin:
         standalone_updates: list,
         mod_operation_token: str | None = None,
         datapack_updates: list | None = None,
+        plugin_updates: list | None = None,
     ) -> None:
         from hosty.shared.backend import modrinth_client
 
@@ -1145,8 +1294,8 @@ class ModsMixin:
             GLib.idle_add(lambda t=mod_operation_token: self._end_mod_operation(t))
             return
 
-        mods_dir = root / "mods"
-        mods_dir.mkdir(parents=True, exist_ok=True)
+        content_dir = self._content_dir() or (root / "mods")
+        content_dir.mkdir(parents=True, exist_ok=True)
 
         applied = 0
         failed = 0
@@ -1185,7 +1334,7 @@ class ModsMixin:
 
                 removed = previous_mods - new_managed_mods
                 for name in removed:
-                    old_path = self._find_mod_jar_path(mods_dir, name)
+                    old_path = self._find_mod_jar_path(content_dir, name)
                     if old_path and old_path.exists():
                         old_path.unlink(missing_ok=True)
                     self._remove_mod_from_mod_states(name)
@@ -1225,13 +1374,13 @@ class ModsMixin:
                 # Download new dependencies
                 new_dep_names = {str(dep.filename).strip().lower() for dep in deps_to_install}
                 for dep in deps_to_install:
-                    modrinth_client.download_to(dep.download_url, mods_dir / dep.filename)
+                    modrinth_client.download_to(dep.download_url, content_dir / dep.filename)
 
                 # Remove old dependencies that are no longer needed
                 removed_deps = old_dep_names - new_dep_names
                 for removed_dep in removed_deps:
                     try:
-                        dep_path = self._find_mod_jar_path(mods_dir, removed_dep)
+                        dep_path = self._find_mod_jar_path(content_dir, removed_dep)
                         if dep_path and dep_path.exists():
                             # Check if any other mod needs this dependency
                             remaining_parents = [
@@ -1244,9 +1393,9 @@ class ModsMixin:
                     except Exception:
                         pass
 
-                modrinth_client.download_to(latest.download_url, mods_dir / latest.filename)
+                modrinth_client.download_to(latest.download_url, content_dir / latest.filename)
                 if old_name and old_name.lower() != latest.filename.lower():
-                    old_path = self._find_mod_jar_path(mods_dir, old_name)
+                    old_path = self._find_mod_jar_path(content_dir, old_name)
                     if old_path and old_path.exists():
                         old_path.unlink(missing_ok=True)
                     self._remove_mod_from_mod_states(old_name)
@@ -1262,6 +1411,32 @@ class ModsMixin:
                     version_number=latest.version_number,
                 )
                 self._record_dependency_installs(latest.filename, deps_to_install)
+                applied += 1
+            except Exception:
+                failed += 1
+
+        plugin_update_list = plugin_updates or []
+        for index, (project_id, meta, latest) in enumerate(plugin_update_list, start=1):
+            plugin_title = str((meta or {}).get("title", "")).strip() or project_id
+            GLib.idle_add(
+                lambda i=index, total=len(plugin_update_list), t=plugin_title: self._set_mod_update_row_subtitle(
+                    _("Updating plugin {}/{}: {}").format(i, total, t)
+                )
+            )
+            try:
+                old_filename = str((meta or {}).get("filename", "")).strip()
+                modrinth_client.download_to(latest.download_url, content_dir / latest.filename)
+                if old_filename and old_filename.lower() != latest.filename.lower():
+                    old_path = self._find_mod_jar_path(content_dir, old_filename)
+                    if old_path and old_path.exists():
+                        old_path.unlink(missing_ok=True)
+                self._record_plugin_install(
+                    project_id,
+                    plugin_title,
+                    latest.version_id,
+                    latest.filename,
+                    version_number=latest.version_number,
+                )
                 applied += 1
             except Exception:
                 failed += 1

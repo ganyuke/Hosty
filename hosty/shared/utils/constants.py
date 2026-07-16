@@ -48,6 +48,23 @@ FABRIC_GAME_VERSIONS_URL = f"{FABRIC_META_BASE}/game"
 FABRIC_LOADER_VERSIONS_URL = f"{FABRIC_META_BASE}/loader"
 FABRIC_INSTALLER_VERSIONS_URL = f"{FABRIC_META_BASE}/installer"
 
+# Mojang version manifest
+MOJANG_VERSION_MANIFEST = "https://launchermeta.mojang.com/mc/game/version_manifest_v2.json"
+
+# PaperMC Fill v3
+PAPER_FILL_API = "https://fill.papermc.io/v3/projects/paper"
+PAPER_USER_AGENT = "Hosty/1.0 (+https://github.com/sugarycandybar/Hosty)"
+
+# Purpur
+PURPUR_API_BASE = "https://api.purpurmc.org/v2/purpur"
+
+# NeoForge Maven
+NEOFORGE_MAVEN_METADATA = "https://maven.neoforged.net/releases/net/neoforged/neoforge/maven-metadata.xml"
+NEOFORGE_INSTALLER_URL = "https://maven.neoforged.net/releases/net/neoforged/neoforge/{version}/neoforge-{version}-installer.jar"
+
+# Spigot BuildTools
+SPIGOT_BUILDTOOLS_URL = "https://hub.spigotmc.org/jenkins/job/BuildTools/lastSuccessfulBuild/artifact/target/BuildTools.jar"
+
 # Adoptium JRE API
 ADOPTIUM_API_BASE = "https://api.adoptium.net/v3/binary/latest"
 

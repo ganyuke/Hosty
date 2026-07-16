@@ -45,6 +45,11 @@ class ModrinthMixin:
 
     def _build_modrinth_search_view(self) -> Gtk.Widget:
         from hosty.shared.backend import modrinth_client
+        from hosty.shared.backend.platforms import is_mod_platform, platform_label
+
+        platform = self._server_platform()
+        loader = self._modrinth_loader()
+        platform_name = platform_label(platform)
 
         tv = Adw.ToolbarView()
         tv.set_hexpand(True)
@@ -61,7 +66,7 @@ class ModrinthMixin:
 
         entry = Gtk.SearchEntry()
         entry.set_hexpand(True)
-        entry.set_placeholder_text("Search Fabric mods…")
+        entry.set_placeholder_text(_("Search {} mods…").format(platform_name))
         entry.add_css_class("modrinth-search-entry")
         search_outer.append(entry)
 
@@ -84,11 +89,17 @@ class ModrinthMixin:
         outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
         outer.set_hexpand(True)
 
-        project_type_items = [
-            (_("Mods"), "mod"),
-            (_("Modpacks"), "modpack"),
-            (_("Datapacks"), "datapack"),
-        ]
+        if is_mod_platform(platform):
+            project_type_items = [
+                (_("Mods"), "mod"),
+                (_("Modpacks"), "modpack"),
+                (_("Datapacks"), "datapack"),
+            ]
+        else:
+            project_type_items = [
+                (_("Plugins"), "plugin"),
+                (_("Datapacks"), "datapack"),
+            ]
         category_items = [
             (_("Any category"), ""),
             (_("Optimization"), "optimization"),
@@ -220,11 +231,13 @@ class ModrinthMixin:
         def update_search_hint() -> None:
             ptype = selected_project_type()
             if ptype == "modpack":
-                entry.set_placeholder_text(_("Search Fabric modpacks…"))
+                entry.set_placeholder_text(_("Search {} modpacks…").format(platform_name))
             elif ptype == "datapack":
                 entry.set_placeholder_text(_("Search datapacks…"))
+            elif ptype == "plugin":
+                entry.set_placeholder_text(_("Search {} plugins…").format(platform_name))
             else:
-                entry.set_placeholder_text(_("Search Fabric mods…"))
+                entry.set_placeholder_text(_("Search {} mods…").format(platform_name))
 
         def clear_results():
             while True:
@@ -234,13 +247,10 @@ class ModrinthMixin:
                 results.remove(r)
 
         def installed_mod_names() -> set[str]:
-            root = self._server_dir()
-            if not root:
+            content_dir = self._content_dir()
+            if not content_dir or not content_dir.is_dir():
                 return set()
-            mods_dir = root / "mods"
-            if not mods_dir.is_dir():
-                return set()
-            return {p.name.lower() for p in mods_dir.glob("*.jar")}
+            return {p.name.lower() for p in content_dir.glob("*.jar")}
 
         def finish_search(hits, total, err, version, qtxt, appending: bool):
             set_busy(False)
@@ -287,8 +297,8 @@ class ModrinthMixin:
                         sort=sort_key,
                         game_version=(mc_version if mc_version else None),
                         category=category,
-                        loader="fabric",
-                        server_side_only=(project_type != "datapack"),
+                        loader=loader,
+                        server_side_only=(project_type not in {"datapack", "plugin"}),
                         project_type=project_type,
                     )
                     GLib.idle_add(
@@ -386,13 +396,10 @@ class ModrinthMixin:
         return False
 
     def _installed_mod_names(self) -> set[str]:
-        root = self._server_dir()
-        if not root:
+        content_dir = self._content_dir()
+        if not content_dir or not content_dir.is_dir():
             return set()
-        mods_dir = root / "mods"
-        if not mods_dir.is_dir():
-            return set()
-        return {p.name.lower() for p in mods_dir.glob("*.jar")}
+        return {p.name.lower() for p in content_dir.glob("*.jar")}
 
     def _refresh_modrinth_rows_install_state(self) -> None:
         if not hasattr(self, "_modrinth_results_list"):
@@ -439,13 +446,14 @@ class ModrinthMixin:
         identifiers = {slug, title.replace(" ", "-"), project_id}
         playit = self._server_manager.playit_manager
         server_dir = str(self._server_info.server_dir)
+        platform = self._server_info.platform
 
         if "geyser" in identifiers:
-            playit.configure_geyser_mod(server_dir)
+            playit.configure_geyser_mod(server_dir, platform=platform)
             return
 
         if "floodgate" in identifiers:
-            playit.configure_floodgate_mod(server_dir)
+            playit.configure_floodgate_mod(server_dir, platform=platform)
             return
 
         if "simple-voice-chat" in identifiers or "voice-chat" in identifiers:
@@ -505,6 +513,7 @@ class ModrinthMixin:
         ptype = str(getattr(hit, "project_type", "mod")).lower()
         is_modpack = ptype == "modpack"
         is_datapack = ptype == "datapack"
+        is_plugin = ptype == "plugin"
 
         row = Gtk.ListBoxRow()
         row.set_activatable(True)
@@ -533,7 +542,9 @@ class ModrinthMixin:
             _set_row_btn(_("Installed"), False)
         elif is_datapack and self._is_datapack_installed(hit.project_id):
             _set_row_btn(_("Installed"), False)
-        elif (not is_modpack) and (not is_datapack) and self._looks_installed(hit, installed_names):
+        elif is_plugin and self._is_plugin_installed(hit.project_id):
+            _set_row_btn(_("Installed"), False)
+        elif (not is_modpack) and (not is_datapack) and (not is_plugin) and self._looks_installed(hit, installed_names):
             _set_row_btn(_("Installed"), False)
 
         def _mk_text_col():
@@ -655,12 +666,13 @@ class ModrinthMixin:
                 _set_row_btn(sensitive=False)
                 return
             try:
-                loader_for_query = "datapack" if is_datapack else "fabric"
+                loader_for_query = "" if is_datapack else self._modrinth_loader()
                 versions = modrinth_client.find_compatible_versions(
                     hit.project_id,
                     mc_version,
                     loader=loader_for_query,
                     limit=1,
+                    project_type="datapack" if is_datapack else ptype,
                 )
                 if not versions:
                     _set_row_btn(sensitive=False)
@@ -718,6 +730,8 @@ class ModrinthMixin:
         op_token: str,
     ) -> None:
         from hosty.shared.backend import modrinth_client
+
+        is_plugin = str(getattr(hit, "project_type", "mod")).lower() == "plugin"
 
         def _set_btns(label=None, sensitive=None):
             for b in install_btns:
@@ -816,7 +830,7 @@ class ModrinthMixin:
                     deps = modrinth_client.resolve_required_dependencies(
                         chosen.version_id,
                         mc_version,
-                        loader="datapack",
+                        loader="",
                     )
                     dp_state = self._read_datapack_state().get("datapacks", {})
                     installed_ids = set(dp_state.keys())
@@ -902,18 +916,30 @@ class ModrinthMixin:
 
         def ui_ok(fname: str, dep_count: int):
             _set_btns(_("Installed"), False)
-            self._record_individual_mod_install(
-                hit.project_id,
-                hit.title,
-                chosen.version_id,
-                chosen.filename,
-                version_number=chosen.version_number,
-            )
+            if is_plugin:
+                self._record_plugin_install(
+                    hit.project_id,
+                    hit.title,
+                    chosen.version_id,
+                    chosen.filename,
+                    version_number=chosen.version_number,
+                )
+            else:
+                self._record_individual_mod_install(
+                    hit.project_id,
+                    hit.title,
+                    chosen.version_id,
+                    chosen.filename,
+                    version_number=chosen.version_number,
+                )
             if dep_count > 0:
                 self._toast(_("Installed {} required dependencies").format(dep_count))
             self._toast(_("Installed {}").format(fname))
             if self._is_running():
-                self._toast(_("Restart the server for mod changes to apply"))
+                restart_msg = _("Restart the server for plugin changes to apply") if is_plugin else _(
+                    "Restart the server for mod changes to apply"
+                )
+                self._toast(restart_msg)
             self._end_mod_operation(op_token)
             self._rebuild_lists()
 
@@ -924,16 +950,20 @@ class ModrinthMixin:
 
         def thread_fn(deps_to_install: list, all_required_deps: list):
             try:
-                root = self._server_dir()
-                if not root:
+                if not self._server_dir():
                     raise RuntimeError("No server selected.")
 
-                mods_dir = root / "mods"
+                mods_dir = self._content_dir()
+                if not mods_dir:
+                    raise RuntimeError("No server selected.")
                 mods_dir.mkdir(parents=True, exist_ok=True)
                 installed_names_local = {p.name.lower() for p in mods_dir.glob("*.jar")}
 
                 # Delete old version if replacing an existing install
-                old_state = self._read_individual_mod_state().get("mods", {}).get(hit.project_id, None)
+                if is_plugin:
+                    old_state = self._read_plugin_state().get("plugins", {}).get(hit.project_id, None)
+                else:
+                    old_state = self._read_individual_mod_state().get("mods", {}).get(hit.project_id, None)
                 if old_state:
                     old_filename = old_state.get("filename", "")
                     if old_filename and old_filename.lower() != chosen.filename.lower():
@@ -956,8 +986,9 @@ class ModrinthMixin:
 
                 dest = mods_dir / chosen.filename
                 modrinth_client.download_to(chosen.download_url, dest)
-                self._record_dependency_installs(chosen.filename, all_required_deps)
-                self._configure_known_mod_after_download(hit)
+                if not is_plugin:
+                    self._record_dependency_installs(chosen.filename, all_required_deps)
+                    self._configure_known_mod_after_download(hit)
                 GLib.idle_add(lambda f=chosen.filename, c=installed_dep_count: ui_ok(f, c))
             except Exception as e:
                 GLib.idle_add(lambda m=str(e): ui_err(m))
@@ -1000,13 +1031,16 @@ class ModrinthMixin:
                 if not root:
                     raise RuntimeError("No server selected.")
 
-                mods_dir = root / "mods"
-                mods_dir.mkdir(parents=True, exist_ok=True)
-                installed_names_local = {p.name.lower() for p in mods_dir.glob("*.jar")}
+                content_dir = self._content_dir()
+                if not content_dir:
+                    raise RuntimeError("No server selected.")
+
+                content_dir.mkdir(parents=True, exist_ok=True)
+                installed_names_local = {p.name.lower() for p in content_dir.glob("*.jar")}
                 deps = modrinth_client.resolve_required_dependencies(
                     chosen.version_id,
                     mc_version,
-                    loader="fabric",
+                    loader=self._modrinth_loader(),
                 )
                 deps_to_install = []
                 for dep in deps:
@@ -1029,6 +1063,7 @@ class ModrinthMixin:
         ptype = str(getattr(hit, "project_type", "mod")).lower()
         is_modpack = ptype == "modpack"
         is_datapack = ptype == "datapack"
+        is_plugin = ptype == "plugin"
 
         btn_label = _("Install")
 
@@ -1308,12 +1343,13 @@ class ModrinthMixin:
                             )
                         )
 
-                loader_for_query = "datapack" if is_datapack else "fabric"
+                loader_for_query = "" if is_datapack else self._modrinth_loader()
                 all_versions = modrinth_client.find_compatible_versions(
                     hit.project_id,
                     mc_version,
                     loader=loader_for_query,
                     limit=20,
+                    project_type="datapack" if is_datapack else ptype,
                 )
 
                 GLib.idle_add(

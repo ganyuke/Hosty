@@ -12,6 +12,7 @@ from datetime import datetime
 from pathlib import Path
 
 from hosty.shared.backend.config_manager import ConfigManager
+from hosty.shared.backend.platforms import Platform, is_mod_platform, is_plugin_platform, normalize_platform
 from hosty.shared.backend.download_manager import DownloadManager
 from hosty.shared.backend.java_manager import JavaManager
 from hosty.shared.backend.playit_config import load_playit_config
@@ -33,6 +34,7 @@ class ServerInfo:
     def __init__(self, data: dict):
         self.id: str = data.get("id", str(uuid.uuid4()))
         self.name: str = data.get("name", _("Unnamed Server"))
+        self.platform: str = normalize_platform(data.get("platform", Platform.FABRIC)).value
         self.mc_version: str = data.get("mc_version", "")
         self.loader_version: str = data.get("loader_version", "")
         self.ram_mb: int = data.get("ram_mb", DEFAULT_RAM_MB)
@@ -53,6 +55,7 @@ class ServerInfo:
         return {
             "id": self.id,
             "name": self.name,
+            "platform": self.platform,
             "mc_version": self.mc_version,
             "loader_version": self.loader_version,
             "ram_mb": self.ram_mb,
@@ -112,19 +115,26 @@ class ServerManager(EventEmitter):
         return self._servers.get(server_id)
 
     def add_server(
-        self, name: str, mc_version: str, loader_version: str = "", ram_mb: int = DEFAULT_RAM_MB
+        self,
+        name: str,
+        mc_version: str,
+        loader_version: str = "",
+        ram_mb: int = DEFAULT_RAM_MB,
+        platform: str | Platform = Platform.FABRIC,
     ) -> ServerInfo:
         """
         Create and register a new server.
-        Does NOT install Fabric -- call install_server() separately.
+        Does NOT install the platform runtime -- installation is done separately.
         """
         server_id = str(uuid.uuid4())
         java_ver = get_required_java_version(mc_version)
+        plat = normalize_platform(platform)
 
         info = ServerInfo(
             {
                 "id": server_id,
                 "name": name,
+                "platform": plat.value,
                 "mc_version": mc_version,
                 "loader_version": loader_version,
                 "ram_mb": ram_mb,
@@ -203,7 +213,7 @@ class ServerManager(EventEmitter):
         progress_callback=None,
         compatibility_plan: dict | None = None,
     ) -> tuple[bool, str]:
-        """Install a new Minecraft/Fabric runtime, update compatible content, and isolate incompatible content."""
+        """Install a new platform runtime, update compatible content, and isolate incompatible content."""
         from hosty.shared.utils.constants import get_required_java_version
 
         info = self._servers.get(server_id)
@@ -216,13 +226,14 @@ class ServerManager(EventEmitter):
 
         mc_version = str(mc_version or "").strip()
         loader_version = str(loader_version or "").strip() if loader_version is not None else info.loader_version
+        platform = normalize_platform(info.platform)
         if not mc_version:
             return False, _("Minecraft version is required")
 
         try:
             java_req = get_required_java_version(mc_version)
         except Exception:
-            java_req = 21  # Default fallback
+            java_req = 21
 
         root = info.server_dir
         root.mkdir(parents=True, exist_ok=True)
@@ -244,37 +255,27 @@ class ServerManager(EventEmitter):
             if not ok:
                 return False, _("Failed to download Java {}: {}").format(java_req, msg)
 
-        progress(0.28, _("Downloading Fabric installer"))
-        installer_path = self.download_manager.download_installer(
-            progress_callback=lambda f, text: progress(0.28 + f * 0.12, text),
-        )
-        if not installer_path:
-            return False, _("Failed to download Fabric installer")
+        self.download_manager.cleanup_platform_artifacts(str(root), platform)
 
-        for filename in ("server.jar", "fabric-server-launch.jar"):
-            try:
-                (root / filename).unlink(missing_ok=True)
-            except Exception:
-                pass
-
-        progress(0.42, _("Downloading Minecraft {} server").format(mc_version))
-        ok, msg = self.download_manager.download_server_jar(
-            mc_version,
-            str(root),
-            progress_callback=lambda f, text: progress(0.42 + f * 0.22, text),
-        )
-        if not ok:
-            return False, msg
+        if self.download_manager.platform_needs_vanilla_jar(platform):
+            progress(0.28, _("Downloading Minecraft {} server").format(mc_version))
+            ok, msg = self.download_manager.download_server_jar(
+                mc_version,
+                str(root),
+                progress_callback=lambda f, text: progress(0.28 + f * 0.22, text),
+            )
+            if not ok:
+                return False, msg
 
         java_path = self.java_manager.get_java_path(java_req) or self.java_manager.get_java_for_mc(mc_version) or "java"
-        progress(0.66, _("Installing Fabric server"))
-        ok, msg = self.download_manager.install_fabric_server(
+        progress(0.52, _("Installing {} server").format(platform.value))
+        ok, msg = self.download_manager.install_platform_server(
+            platform=platform,
             java_path=java_path,
-            installer_jar=installer_path,
             mc_version=mc_version,
             server_dir=str(root),
             loader_version=loader_version or None,
-            progress_callback=lambda f, text: progress(0.66 + f * 0.30, text),
+            progress_callback=lambda f, text: progress(0.52 + f * 0.34, text),
         )
         if not ok:
             return False, msg
@@ -297,6 +298,7 @@ class ServerManager(EventEmitter):
             existing_process.java_path = (
                 self.java_manager.get_java_path(java_req) or self.java_manager.get_java_for_mc(mc_version) or "java"
             )
+            existing_process.platform = platform
         self.emit_on_main_thread("server-changed", server_id)
         progress(1.0, _("Server runtime updated"))
 
@@ -323,7 +325,9 @@ class ServerManager(EventEmitter):
 
     def _server_datapacks_dir(self, root: Path) -> Path:
         world_name = self._configured_level_name(root)
-        return root / world_name / "datapacks"
+        path = root / world_name / "datapacks"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        return path
 
     def _unique_disabled_path(self, dest_dir: Path, filename: str) -> Path:
         dest_dir.mkdir(parents=True, exist_ok=True)
@@ -393,6 +397,10 @@ class ServerManager(EventEmitter):
     def _tracked_datapack_state(self, root: Path) -> dict:
         data = self._json_file(root / ".hosty-datapack-installs.json")
         return data.get("datapacks") if isinstance(data.get("datapacks"), dict) else {}
+
+    def _tracked_plugin_state(self, root: Path) -> dict:
+        data = self._json_file(root / ".hosty-plugin-installs.json")
+        return data.get("plugins") if isinstance(data.get("plugins"), dict) else {}
 
     def _tracked_mod_dependency_state(self, root: Path) -> dict[str, list[str]]:
         data = self._json_file(root / ".hosty-mod-dependencies.json")
@@ -495,16 +503,19 @@ class ServerManager(EventEmitter):
         """Return compatible/incompatible tracked content for a target Minecraft version."""
         info = self._servers.get(server_id)
         if not info:
-            empty = {"mods": [], "modpacks": [], "datapacks": []}
+            empty = {"mods": [], "modpacks": [], "datapacks": [], "plugins": []}
             return {"compatible": empty.copy(), "incompatible": empty.copy(), "unknown": empty.copy()}
 
         from hosty.shared.backend import modrinth_client
+        from hosty.shared.backend.platforms import modrinth_loader
 
         root = info.server_dir
+        platform = normalize_platform(info.platform)
+        loader = modrinth_loader(platform)
         plan = {
-            "compatible": {"mods": [], "modpacks": [], "datapacks": []},
-            "incompatible": {"mods": [], "modpacks": [], "datapacks": []},
-            "unknown": {"mods": [], "modpacks": [], "datapacks": []},
+            "compatible": {"mods": [], "modpacks": [], "datapacks": [], "plugins": []},
+            "incompatible": {"mods": [], "modpacks": [], "datapacks": [], "plugins": []},
+            "unknown": {"mods": [], "modpacks": [], "datapacks": [], "plugins": []},
         }
 
         def best_version(project_id: str, kind: str):
@@ -517,44 +528,64 @@ class ServerManager(EventEmitter):
             if kind == "datapacks":
                 candidates = [v for v in versions if not (v.loaders or [])]
             elif kind == "modpacks":
-                loader_candidates = [v for v in versions if "fabric" in [x.lower() for x in (v.loaders or [])]]
+                loader_candidates = [v for v in versions if loader in [x.lower() for x in (v.loaders or [])]]
                 candidates = loader_candidates or versions
+            elif kind == "plugins":
+                plugin_loaders = {loader, "spigot", "bukkit", "paper", "purpur"}
+                candidates = [v for v in versions if plugin_loaders.intersection({x.lower() for x in (v.loaders or [])})]
             else:
-                candidates = [v for v in versions if "fabric" in [x.lower() for x in (v.loaders or [])]]
+                candidates = [v for v in versions if loader in [x.lower() for x in (v.loaders or [])]]
             exact = [v for v in candidates if target_mc_version in (v.game_versions or [])]
             return exact[0] if exact else False
 
-        for project_id, meta in self._tracked_modpack_state(root).items():
-            if not isinstance(meta, dict):
-                continue
-            version = best_version(str(project_id), "modpacks")
-            if version is False:
-                entry = self._incompatible_entry(str(project_id), meta, target_mc_version, "modpack")
-                entry["filename"] = ", ".join([str(Path(str(f)).name) for f in (meta.get("mods") or [])])
-                plan["incompatible"]["modpacks"].append(entry)
-            elif version is None:
-                plan["unknown"]["modpacks"].append(
-                    self._incompatible_entry(str(project_id), meta, target_mc_version, "modpack")
-                )
-            else:
-                entry = self._version_entry(str(project_id), meta, version)
-                entry["previous_mods"] = json.dumps([str(Path(str(f)).name) for f in (meta.get("mods") or [])])
-                plan["compatible"]["modpacks"].append(entry)
+        if is_mod_platform(platform):
+            for project_id, meta in self._tracked_modpack_state(root).items():
+                if not isinstance(meta, dict):
+                    continue
+                version = best_version(str(project_id), "modpacks")
+                if version is False:
+                    entry = self._incompatible_entry(str(project_id), meta, target_mc_version, "modpack")
+                    entry["filename"] = ", ".join([str(Path(str(f)).name) for f in (meta.get("mods") or [])])
+                    plan["incompatible"]["modpacks"].append(entry)
+                elif version is None:
+                    plan["unknown"]["modpacks"].append(
+                        self._incompatible_entry(str(project_id), meta, target_mc_version, "modpack")
+                    )
+                else:
+                    entry = self._version_entry(str(project_id), meta, version)
+                    entry["previous_mods"] = json.dumps([str(Path(str(f)).name) for f in (meta.get("mods") or [])])
+                    plan["compatible"]["modpacks"].append(entry)
 
-        for project_id, meta in self._tracked_mod_state(root).items():
-            if not isinstance(meta, dict):
-                continue
-            version = best_version(str(project_id), "mods")
-            if version is False:
-                plan["incompatible"]["mods"].append(
-                    self._incompatible_entry(str(project_id), meta, target_mc_version, "mod")
-                )
-            elif version is None:
-                plan["unknown"]["mods"].append(
-                    self._incompatible_entry(str(project_id), meta, target_mc_version, "mod")
-                )
-            else:
-                plan["compatible"]["mods"].append(self._version_entry(str(project_id), meta, version))
+            for project_id, meta in self._tracked_mod_state(root).items():
+                if not isinstance(meta, dict):
+                    continue
+                version = best_version(str(project_id), "mods")
+                if version is False:
+                    plan["incompatible"]["mods"].append(
+                        self._incompatible_entry(str(project_id), meta, target_mc_version, "mod")
+                    )
+                elif version is None:
+                    plan["unknown"]["mods"].append(
+                        self._incompatible_entry(str(project_id), meta, target_mc_version, "mod")
+                    )
+                else:
+                    plan["compatible"]["mods"].append(self._version_entry(str(project_id), meta, version))
+
+        if is_plugin_platform(platform):
+            for project_id, meta in self._tracked_plugin_state(root).items():
+                if not isinstance(meta, dict):
+                    continue
+                version = best_version(str(project_id), "plugins")
+                if version is False:
+                    plan["incompatible"]["plugins"].append(
+                        self._incompatible_entry(str(project_id), meta, target_mc_version, "plugin")
+                    )
+                elif version is None:
+                    plan["unknown"]["plugins"].append(
+                        self._incompatible_entry(str(project_id), meta, target_mc_version, "plugin")
+                    )
+                else:
+                    plan["compatible"]["plugins"].append(self._version_entry(str(project_id), meta, version))
 
         for project_id, meta in self._tracked_datapack_state(root).items():
             if not isinstance(meta, dict):
@@ -623,10 +654,13 @@ class ServerManager(EventEmitter):
             return 0, 0
 
         from hosty.shared.backend import modrinth_client
+        from hosty.shared.backend.platforms import content_dir_name, modrinth_loader
 
         root = info.server_dir
-        mods_dir = root / "mods"
-        mods_dir.mkdir(parents=True, exist_ok=True)
+        platform = normalize_platform(info.platform)
+        loader = modrinth_loader(platform)
+        content_dir = root / content_dir_name(platform)
+        content_dir.mkdir(parents=True, exist_ok=True)
         dp_dir = self._server_datapacks_dir(root)
         dp_dir.mkdir(parents=True, exist_ok=True)
         plan = plan or self.scan_update_compatibility(server_id, target_mc_version)
@@ -661,7 +695,7 @@ class ServerManager(EventEmitter):
                     if str(m).strip().lower().endswith(".jar")
                 }
                 for removed in previous_mods - new_mods:
-                    old = self._find_file_case_insensitive(mods_dir, removed)
+                    old = self._find_file_case_insensitive(content_dir, removed)
                     if old:
                         old.unlink(missing_ok=True)
                     self._remove_filename_from_tracked_mods(root, removed)
@@ -691,12 +725,12 @@ class ServerManager(EventEmitter):
                 if not project_id or not version_id or not filename or not download_url:
                     continue
 
-                deps = modrinth_client.resolve_required_dependencies(version_id, target_mc_version, "fabric")
+                deps = modrinth_client.resolve_required_dependencies(version_id, target_mc_version, loader)
                 for dep in deps:
                     dep_name = Path(str(dep.filename)).name
                     if dep_name.casefold() in managed_mods or dep_name.casefold() == filename.casefold():
                         continue
-                    modrinth_client.download_to(dep.download_url, mods_dir / dep_name)
+                    modrinth_client.download_to(dep.download_url, content_dir / dep_name)
                     dep_project_id = str(getattr(dep, "project_id", "") or "").strip()
                     if dep_project_id:
                         mod_state[dep_project_id] = {
@@ -708,7 +742,7 @@ class ServerManager(EventEmitter):
                             "filename": dep_name,
                         }
 
-                modrinth_client.download_to(download_url, mods_dir / filename)
+                modrinth_client.download_to(download_url, content_dir / filename)
                 old_filename = str(entry.get("current_filename", "")).strip()
                 old_dep_names, new_dep_names = self._replace_mod_dependency_parent(
                     root,
@@ -717,7 +751,7 @@ class ServerManager(EventEmitter):
                     [dep for dep in deps if Path(str(dep.filename)).name.casefold() not in managed_mods],
                 )
                 if old_filename and Path(old_filename).name.casefold() != filename.casefold():
-                    old = self._find_file_case_insensitive(mods_dir, old_filename)
+                    old = self._find_file_case_insensitive(content_dir, old_filename)
                     if old:
                         old.unlink(missing_ok=True)
                     self._remove_filename_from_tracked_mods(root, old_filename)
@@ -729,6 +763,32 @@ class ServerManager(EventEmitter):
                     "filename": filename,
                 }
                 self._write_json_file(root / ".hosty-mod-installs.json", {"mods": mod_state})
+                applied += 1
+            except Exception:
+                failed += 1
+
+        plugin_state = self._tracked_plugin_state(root)
+        for entry in compatible.get("plugins", []) or []:
+            try:
+                project_id = str(entry.get("project_id", "")).strip()
+                version_id = str(entry.get("version_id", "")).strip()
+                filename = Path(str(entry.get("filename", ""))).name
+                download_url = str(entry.get("download_url", "")).strip()
+                if not project_id or not version_id or not filename or not download_url:
+                    continue
+                modrinth_client.download_to(download_url, content_dir / filename)
+                old_filename = str(entry.get("current_filename", "")).strip()
+                if old_filename and Path(old_filename).name.casefold() != filename.casefold():
+                    old = self._find_file_case_insensitive(content_dir, old_filename)
+                    if old:
+                        old.unlink(missing_ok=True)
+                plugin_state[project_id] = {
+                    "title": str(entry.get("title", "")),
+                    "version_id": version_id,
+                    "version_number": str(entry.get("version_number", "")),
+                    "filename": filename,
+                }
+                self._write_json_file(root / ".hosty-plugin-installs.json", {"plugins": plugin_state})
                 applied += 1
             except Exception:
                 failed += 1
@@ -772,14 +832,17 @@ class ServerManager(EventEmitter):
         if not info:
             return {"mods": [], "modpacks": [], "datapacks": []}
 
+        from hosty.shared.backend.platforms import content_dir_name
+
         root = info.server_dir
-        mods_dir = root / "mods"
+        content_dir = root / content_dir_name(normalize_platform(info.platform))
         datapacks_dir = self._server_datapacks_dir(root)
         disabled_mods = root / "mods_incompatible"
+        disabled_plugins = root / "plugins_incompatible"
         disabled_datapacks = root / "datapacks_incompatible"
         plan = plan or self.scan_update_compatibility(server_id, target_mc_version)
         incompatible = plan.get("incompatible") if isinstance(plan.get("incompatible"), dict) else {}
-        record: dict[str, list[dict[str, str]]] = {"mods": [], "modpacks": [], "datapacks": []}
+        record: dict[str, list[dict[str, str]]] = {"mods": [], "modpacks": [], "datapacks": [], "plugins": []}
 
         mod_state_path = root / ".hosty-mod-installs.json"
         mods = self._tracked_mod_state(root)
@@ -789,7 +852,7 @@ class ServerManager(EventEmitter):
             meta = mods.get(project_id)
             if not isinstance(meta, dict):
                 continue
-            moved = self._move_if_present(mods_dir, str(meta.get("filename", "")), disabled_mods)
+            moved = self._move_if_present(content_dir, str(meta.get("filename", "")), disabled_mods)
             if moved:
                 kept_mods.pop(project_id, None)
                 new_entry = dict(entry)
@@ -808,13 +871,30 @@ class ServerManager(EventEmitter):
                 continue
             moved_any = False
             for filename in meta.get("mods") or []:
-                moved = self._move_if_present(mods_dir, str(filename), disabled_mods)
+                moved = self._move_if_present(content_dir, str(filename), disabled_mods)
                 moved_any = bool(moved) or moved_any
             if moved_any:
                 kept_packs.pop(project_id, None)
                 record["modpacks"].append(dict(entry))
         if kept_packs != packs:
             self._write_json_file(pack_state_path, {"installed_projects": kept_packs})
+
+        plugin_state_path = root / ".hosty-plugin-installs.json"
+        plugins = self._tracked_plugin_state(root)
+        kept_plugins = dict(plugins)
+        for entry in incompatible.get("plugins", []) or []:
+            project_id = str(entry.get("project_id", "")).strip()
+            meta = plugins.get(project_id)
+            if not isinstance(meta, dict):
+                continue
+            moved = self._move_if_present(content_dir, str(meta.get("filename", "")), disabled_plugins)
+            if moved:
+                kept_plugins.pop(project_id, None)
+                new_entry = dict(entry)
+                new_entry["filename"] = moved.name
+                record["plugins"].append(new_entry)
+        if kept_plugins != plugins:
+            self._write_json_file(plugin_state_path, {"plugins": kept_plugins})
 
         dp_state_path = root / ".hosty-datapack-installs.json"
         datapacks = self._tracked_datapack_state(root)
@@ -835,17 +915,20 @@ class ServerManager(EventEmitter):
 
         if any(record.values()):
             previous = self.get_incompatible_components(server_id)
-            merged = {key: [*previous.get(key, []), *record.get(key, [])] for key in ("mods", "modpacks", "datapacks")}
+            merged = {
+                key: [*previous.get(key, []), *record.get(key, [])]
+                for key in ("mods", "modpacks", "datapacks", "plugins")
+            }
             self._write_json_file(root / ".hosty-incompatible-components.json", merged)
         return record
 
     def get_incompatible_components(self, server_id: str) -> dict[str, list[dict[str, str]]]:
         info = self._servers.get(server_id)
         if not info:
-            return {"mods": [], "modpacks": [], "datapacks": []}
+            return {"mods": [], "modpacks": [], "datapacks": [], "plugins": []}
         data = self._json_file(info.server_dir / ".hosty-incompatible-components.json")
         out: dict[str, list[dict[str, str]]] = {}
-        for key in ("mods", "modpacks", "datapacks"):
+        for key in ("mods", "modpacks", "datapacks", "plugins"):
             values = data.get(key) if isinstance(data.get(key), list) else []
             out[key] = [v for v in values if isinstance(v, dict)]
         return out
@@ -1001,6 +1084,7 @@ class ServerManager(EventEmitter):
                 java_path=java_path or "java",
                 ram_mb=info.ram_mb,
                 max_players=max_players,
+                platform=info.platform,
             )
 
         return self._processes[server_id]

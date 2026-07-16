@@ -1,5 +1,5 @@
 """
-Modrinth API v2 -- search and download Fabric mods and modpacks (stdlib only).
+Modrinth API v2 -- search and download mods, plugins, modpacks, and datapacks.
 """
 
 from __future__ import annotations
@@ -7,6 +7,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
+import logging
 import urllib.error
 import urllib.parse
 import urllib.request
@@ -15,6 +16,10 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
+
+from hosty.shared.backend.platforms import modrinth_plugin_categories
+
+logger = logging.getLogger(__name__)
 
 USER_AGENT = "Hosty/1.0 (+https://github.com/hosty)"
 API = "https://api.modrinth.com/v2"
@@ -55,9 +60,21 @@ class ModpackInstallResult:
     managed_mod_files: list[str]
 
 
-def _version_to_model(ver: dict[str, Any]) -> ModrinthVersion | None:
+def _pick_primary_file(files: list[dict[str, Any]], prefer_zip: bool = False) -> dict[str, Any] | None:
+    primary = next((f for f in files if f.get("primary")), None)
+    if primary:
+        return primary
+    if prefer_zip:
+        zip_file = next((f for f in files if str(f.get("filename", "")).endswith(".zip")), None)
+        if zip_file:
+            return zip_file
+    jar = next((f for f in files if str(f.get("filename", "")).endswith(".jar")), None)
+    return jar if jar else (files[0] if files else None)
+
+
+def _version_to_model(ver: dict[str, Any], prefer_zip: bool = False) -> ModrinthVersion | None:
     files = ver.get("files") or []
-    chosen = _pick_primary_file(files)
+    chosen = _pick_primary_file(files, prefer_zip=prefer_zip)
     if not chosen:
         return None
     return ModrinthVersion(
@@ -81,14 +98,6 @@ def _request_json(url: str, timeout: float = 30.0) -> Any:
     )
     with urllib.request.urlopen(req, timeout=timeout) as resp:
         return json.loads(resp.read().decode("utf-8"))
-
-
-def _pick_primary_file(files: list[dict[str, Any]]) -> dict[str, Any] | None:
-    primary = next((f for f in files if f.get("primary")), None)
-    if primary:
-        return primary
-    jar = next((f for f in files if str(f.get("filename", "")).endswith(".jar")), None)
-    return jar if jar else (files[0] if files else None)
 
 
 def _pick_mrpack_file(files: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -181,20 +190,22 @@ def search_mods(
     if qtext:
         base["query"] = qtext
     ptype = (project_type or "mod").strip().lower()
-    if ptype not in {"mod", "modpack", "datapack"}:
+    if ptype not in {"mod", "modpack", "datapack", "plugin"}:
         ptype = "mod"
 
     if ptype == "datapack":
-        # Datapacks are a first-class project_type on Modrinth -- no loader facet needed.
         facets_raw: list[list[str]] = [["project_type:datapack"]]
+    elif ptype == "plugin":
+        categories = modrinth_plugin_categories(loader)
+        facets_raw = [["project_type:plugin"], categories]
     else:
-        facets_raw: list[list[str]] = [[f"project_type:{ptype}"], [f"categories:{loader}"]]
+        facets_raw = [[f"project_type:{ptype}"], [f"categories:{loader}"]]
 
     if ptype == "modpack":
         facets_raw.append(["server_side:required", "server_side:optional", "server_side:unknown"])
     elif server_side_only and ptype == "mod":
         facets_raw.append(["server_side:required", "server_side:optional"])
-    if category and ptype != "datapack":
+    if category and ptype not in {"datapack", "plugin"}:
         facets_raw.append([f"categories:{category}"])
     if game_version:
         facets_raw.append([f"versions:{game_version}"])
@@ -202,9 +213,9 @@ def search_mods(
     url = f"{API}/search?{urllib.parse.urlencode({**base, 'facets': facets})}"
     try:
         data = _request_json(url)
-    except urllib.error.HTTPError:
-        url = f"{API}/search?{urllib.parse.urlencode(base)}"
-        data = _request_json(url)
+    except urllib.error.HTTPError as exc:
+        logger.warning("Modrinth facet search failed (%s); returning empty results", exc)
+        return [], 0
     raw_hits = data.get("hits", [])
     if server_side_only and ptype == "mod":
         allowed = {"required", "optional"}
@@ -258,7 +269,7 @@ def get_project(project_id: str) -> dict[str, Any] | None:
     return None
 
 
-def get_project_versions(project_id: str) -> list[ModrinthVersion]:
+def get_project_versions(project_id: str, prefer_zip: bool = False) -> list[ModrinthVersion]:
     """Return all available versions for a project (newest first per API)."""
     url = f"{API}/project/{project_id}/version"
     try:
@@ -268,10 +279,92 @@ def get_project_versions(project_id: str) -> list[ModrinthVersion]:
 
     out: list[ModrinthVersion] = []
     for ver in raw_versions:
-        model = _version_to_model(ver)
+        model = _version_to_model(ver, prefer_zip=prefer_zip)
         if model:
             out.append(model)
     return out
+
+
+def _is_datapack_loader(loader: str) -> bool:
+    return str(loader or "").strip().lower() in {"", "datapack"}
+
+
+def _datapack_versions(all_versions: list[ModrinthVersion], game_version: str, limit: int) -> list[ModrinthVersion]:
+    if game_version:
+        exact = [
+            v
+            for v in all_versions
+            if game_version in v.game_versions and not (v.loaders or [])
+        ]
+        if exact:
+            return exact[:limit]
+    return []
+
+
+def find_compatible_versions(
+    project_id: str,
+    game_version: str,
+    loader: str = "fabric",
+    limit: int = 8,
+    project_type: str = "mod",
+) -> list[ModrinthVersion]:
+    """Return compatible versions, preferring exact MC+loader matches."""
+    prefer_zip = str(project_type or "").strip().lower() == "datapack"
+    all_versions = get_project_versions(project_id, prefer_zip=prefer_zip)
+    if not all_versions:
+        return []
+
+    if _is_datapack_loader(loader) or prefer_zip:
+        datapack_matches = _datapack_versions(all_versions, game_version, limit)
+        return datapack_matches
+
+    loader_l = loader.lower()
+    if game_version:
+        exact = [
+            v
+            for v in all_versions
+            if game_version in v.game_versions and loader_l in [x.lower() for x in v.loaders]
+        ]
+        if exact:
+            return exact[:limit]
+
+    loader_only = [v for v in all_versions if loader_l in [x.lower() for x in v.loaders]]
+    if loader_only:
+        return loader_only[:limit]
+
+    return []
+
+
+def find_compatible_version(
+    project_id: str,
+    game_version: str,
+    loader: str = "fabric",
+    project_type: str = "mod",
+) -> ModrinthVersion | None:
+    """Return best single version for install, or None."""
+    versions = find_compatible_versions(
+        project_id,
+        game_version,
+        loader=loader,
+        limit=1,
+        project_type=project_type,
+    )
+    return versions[0] if versions else None
+
+
+def find_compatible_version_file(
+    project_id: str,
+    game_version: str,
+    loader: str = "fabric",
+    project_type: str = "mod",
+) -> tuple[str, str] | None:
+    """
+    Returns (download_url, filename) for the best-matching version file, or None.
+    """
+    chosen = find_compatible_version(project_id, game_version, loader=loader, project_type=project_type)
+    if not chosen:
+        return None
+    return (chosen.download_url, chosen.filename)
 
 
 def get_version(version_id: str) -> dict[str, Any] | None:
@@ -319,15 +412,23 @@ def resolve_required_dependencies(
         if dep_version_id:
             raw = get_version(dep_version_id)
             if raw:
-                model = _version_to_model(raw)
+                model = _version_to_model(raw, prefer_zip=_is_datapack_loader(loader_l))
                 if model:
-                    has_loader = loader_l in [x.lower() for x in model.loaders]
+                    if _is_datapack_loader(loader_l):
+                        has_loader = not (model.loaders or [])
+                    else:
+                        has_loader = loader_l in [x.lower() for x in model.loaders]
                     has_game = (not game_version) or (game_version in model.game_versions)
                     if has_loader and has_game:
                         version_obj = model
 
         if version_obj is None and dep_project_id:
-            version_obj = find_compatible_version(dep_project_id, game_version, loader=loader)
+            version_obj = find_compatible_version(
+                dep_project_id,
+                game_version,
+                loader=loader,
+                project_type="datapack" if _is_datapack_loader(loader_l) else "mod",
+            )
 
         if version_obj is None:
             continue
@@ -346,49 +447,6 @@ def resolve_required_dependencies(
         resolved.append(version_obj)
 
     return resolved
-
-
-def find_compatible_versions(
-    project_id: str,
-    game_version: str,
-    loader: str = "fabric",
-    limit: int = 8,
-) -> list[ModrinthVersion]:
-    """Return compatible versions, preferring exact MC+loader, then loader only."""
-    all_versions = get_project_versions(project_id)
-    if not all_versions:
-        return []
-
-    loader_l = loader.lower()
-    exact = [v for v in all_versions if game_version in v.game_versions and loader_l in [x.lower() for x in v.loaders]]
-    if exact:
-        return exact[:limit]
-
-    loader_only = [v for v in all_versions if loader_l in [x.lower() for x in v.loaders]]
-    if loader_only:
-        return loader_only[:limit]
-
-    return all_versions[:1]
-
-
-def find_compatible_version(
-    project_id: str,
-    game_version: str,
-    loader: str = "fabric",
-) -> ModrinthVersion | None:
-    """Return best single version for install, or None."""
-    versions = find_compatible_versions(project_id, game_version, loader=loader, limit=1)
-    return versions[0] if versions else None
-
-
-def find_compatible_version_file(project_id: str, game_version: str, loader: str = "fabric") -> tuple[str, str] | None:
-    """
-    Returns (download_url, filename) for the best-matching version file, or None.
-    """
-    chosen = find_compatible_version(project_id, game_version, loader=loader)
-    if not chosen:
-        return None
-    return (chosen.download_url, chosen.filename)
 
 
 def download_to(url: str, dest: Path, timeout: float = 120.0) -> None:

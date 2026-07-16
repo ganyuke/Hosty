@@ -709,7 +709,11 @@ class PlayitMixin:
                 self._server_manager.set_bedrock_port(server_id, new_port)
                 self._cfg["bedrock_port"] = new_port
                 self._save_server_config()
-                self._server_manager.playit_manager.configure_geyser_mod(server_dir, new_port)
+                self._server_manager.playit_manager.configure_geyser_mod(
+                    server_dir,
+                    new_port,
+                    platform=self._server_info.platform if self._server_info else None,
+                )
                 self._toast(_("Bedrock port changed to {}").format(new_port))
                 self._bedrock_in_progress = True
                 self._refresh_status_row()
@@ -1038,51 +1042,71 @@ class PlayitMixin:
         self._confirm_delete_tunnel("Voice Chat", confirmed_delete)
 
     def _has_mod_installed(self, server_dir: str, *mod_patterns: str) -> bool:
-        """Check if any of the given mod patterns are installed in the server.
+        """Check if any of the given mod/plugin patterns are installed in the server."""
+        if not self._server_info:
+            return False
+        from hosty.shared.backend.platforms import content_dir_name, normalize_platform
 
-        Args:
-            server_dir: The server directory path
-            *mod_patterns: One or more mod name patterns to search for (case-insensitive, no extension)
-
-        Returns:
-            True if any mod matching the patterns is found, False otherwise
-        """
-        mods_dir = Path(server_dir) / "mods"
-        if not mods_dir.exists():
+        content_dir = Path(server_dir) / content_dir_name(normalize_platform(self._server_info.platform))
+        if not content_dir.exists():
             return False
 
-        # Get all jar files in mods directory
-        installed_mods = {f.stem.lower() for f in mods_dir.glob("*.jar")}
+        installed_mods = {f.stem.lower() for f in content_dir.glob("*.jar")}
 
-        # Check if any of the patterns match an installed mod
         for pattern in mod_patterns:
             pattern_lower = pattern.lower()
-            # Normalize pattern: remove hyphens for matching
             pattern_normalized = pattern_lower.replace("-", "")
 
             for mod_name in installed_mods:
-                # Check if pattern is in mod name or mod name starts with pattern
                 if pattern_lower in mod_name or mod_name.startswith(pattern_lower):
                     return True
-                # Also check normalized version (e.g., "voicechat" matches "voice-chat")
                 mod_normalized = mod_name.replace("-", "")
                 if pattern_normalized in mod_normalized or mod_normalized.startswith(pattern_normalized):
                     return True
 
         return False
 
+    def _modrinth_loaders_for_tunnel_dep(self, project_id: str) -> list[str]:
+        if not self._server_info:
+            return []
+        from hosty.shared.backend.platforms import (
+            is_plugin_platform,
+            modrinth_loader,
+            modrinth_plugin_categories,
+            normalize_platform,
+        )
+
+        platform = normalize_platform(self._server_info.platform)
+        if is_plugin_platform(platform):
+            if project_id in {"geyser", "floodgate"}:
+                return []
+            return modrinth_plugin_categories(platform)
+        return [modrinth_loader(platform)]
+
     def _exact_compatible_modrinth_version(self, project_id: str):
         if not self._server_info:
             return None
         from hosty.shared.backend import modrinth_client
+        from hosty.shared.backend.platforms import is_plugin_platform, normalize_platform
+
+        loaders = self._modrinth_loaders_for_tunnel_dep(project_id)
+        if not loaders:
+            return None
 
         mc_version = str(self._server_info.mc_version or "").strip()
         if not mc_version:
             return None
-        versions = modrinth_client.get_project_versions(project_id)
-        for version in versions:
-            loaders = [str(loader).lower() for loader in (version.loaders or [])]
-            if mc_version in (version.game_versions or []) and "fabric" in loaders:
+
+        platform = normalize_platform(self._server_info.platform)
+        project_type = "plugin" if is_plugin_platform(platform) else "mod"
+        for loader in loaders:
+            version = modrinth_client.find_compatible_version(
+                project_id,
+                mc_version,
+                loader=loader,
+                project_type=project_type,
+            )
+            if version:
                 return version
         return None
 
@@ -1100,6 +1124,23 @@ class PlayitMixin:
                 "filename": str(version.filename),
             }
             state_path.write_text(json.dumps({"mods": mods}, indent=2), encoding="utf-8")
+        except Exception:
+            pass
+
+    def _record_tunnel_installed_plugin(self, project_id: str, title: str, filename: str) -> None:
+        if not self._server_info:
+            return
+        state_path = self._server_info.server_dir / ".hosty-plugin-installs.json"
+        try:
+            data = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
+            plugins = data.get("plugins") if isinstance(data.get("plugins"), dict) else {}
+            plugins[str(project_id)] = {
+                "title": str(title),
+                "version_id": "latest",
+                "version_number": "latest",
+                "filename": str(filename),
+            }
+            state_path.write_text(json.dumps({"plugins": plugins}, indent=2), encoding="utf-8")
         except Exception:
             pass
 
@@ -1136,23 +1177,58 @@ class PlayitMixin:
         except Exception:
             pass
 
+    def _install_geyser_api_plugin(self, project_id: str, title: str) -> tuple[bool, str]:
+        if not self._server_info:
+            return False, _("No server selected")
+        from hosty.shared.backend.platforms import content_dir_name, is_plugin_platform, normalize_platform
+
+        platform = normalize_platform(self._server_info.platform)
+        if not is_plugin_platform(platform):
+            return False, _("GeyserMC plugin install is only supported on Spigot, Paper, and Purpur servers")
+
+        content_dir = self._server_info.server_dir / content_dir_name(platform)
+        playit = self._server_manager.playit_manager
+        ok, msg, filename = playit.download_geyser_spigot_plugin(project_id, content_dir)
+        if not ok:
+            return False, msg
+
+        self._record_tunnel_installed_plugin(project_id, title, filename)
+        server_dir = str(self._server_info.server_dir)
+        if project_id == "geyser":
+            playit.configure_geyser_mod(server_dir, platform=platform)
+        elif project_id == "floodgate":
+            playit.configure_floodgate_mod(server_dir, platform=platform)
+        return True, _("Installed {}").format(title)
+
     def _install_tunnel_mod(self, project_id: str, title: str) -> tuple[bool, str]:
         if not self._server_info:
             return False, _("No server selected")
+        from hosty.shared.backend.platforms import (
+            content_dir_name,
+            is_plugin_platform,
+            modrinth_loader,
+            normalize_platform,
+        )
+
+        platform = normalize_platform(self._server_info.platform)
+        if is_plugin_platform(platform) and project_id in {"geyser", "floodgate"}:
+            return self._install_geyser_api_plugin(project_id, title)
+
         from hosty.shared.backend import modrinth_client
 
         version = self._exact_compatible_modrinth_version(project_id)
         if not version:
             return False, _("{} is not available for Minecraft {}").format(title, self._server_info.mc_version)
 
-        mods_dir = self._server_info.server_dir / "mods"
-        mods_dir.mkdir(parents=True, exist_ok=True)
-        installed_names = {path.name.lower() for path in mods_dir.glob("*.jar")}
+        content_dir = self._server_info.server_dir / content_dir_name(platform)
+        content_dir.mkdir(parents=True, exist_ok=True)
+        installed_names = {path.name.lower() for path in content_dir.glob("*.jar")}
 
+        loader = modrinth_loader(platform)
         deps = modrinth_client.resolve_required_dependencies(
             version.version_id,
             self._server_info.mc_version,
-            "fabric",
+            loader,
         )
         for dep in deps:
             dep_name = str(dep.filename).strip()
@@ -1160,27 +1236,35 @@ class PlayitMixin:
                 continue
             if dep_name.lower() == str(version.filename).lower():
                 continue
-            modrinth_client.download_to(dep.download_url, mods_dir / dep_name)
+            modrinth_client.download_to(dep.download_url, content_dir / dep_name)
             installed_names.add(dep_name.lower())
 
         if str(version.filename).lower() not in installed_names:
-            modrinth_client.download_to(version.download_url, mods_dir / version.filename)
+            modrinth_client.download_to(version.download_url, content_dir / version.filename)
 
-        self._record_tunnel_installed_mod(version.project_id or project_id, title, version)
-        self._record_tunnel_dependency_installs(version.filename, deps)
+        if is_plugin_platform(platform):
+            self._record_tunnel_installed_plugin(
+                version.project_id or project_id,
+                title,
+                str(version.filename),
+            )
+        else:
+            self._record_tunnel_installed_mod(version.project_id or project_id, title, version)
+            self._record_tunnel_dependency_installs(version.filename, deps)
 
         playit = self._server_manager.playit_manager
+        server_dir = str(self._server_info.server_dir)
         if project_id == "geyser":
-            playit.configure_geyser_mod(str(self._server_info.server_dir))
+            playit.configure_geyser_mod(server_dir, platform=platform)
         elif project_id == "floodgate":
-            playit.configure_floodgate_mod(str(self._server_info.server_dir))
+            playit.configure_floodgate_mod(server_dir, platform=platform)
         elif project_id == "simple-voice-chat":
             from hosty.shared.backend.playit_config import load_playit_config
 
             vc_cfg = load_playit_config(self._server_info.server_dir)
             vc_port = int(vc_cfg.get("voicechat_port", 24454))
             playit.configure_voicechat_mod(
-                str(self._server_info.server_dir),
+                server_dir,
                 self._server_info.id,
                 endpoint=str(vc_cfg.get("voicechat_endpoint", "")).strip(),
                 voicechat_port=vc_port,
@@ -1189,15 +1273,27 @@ class PlayitMixin:
         return True, _("Installed {}").format(title)
 
     def _confirm_required_mod_install(self, tunnel_name: str, mods: list[tuple[str, str]], on_confirm):
+        from hosty.shared.backend.platforms import is_plugin_platform, normalize_platform
+
+        platform = normalize_platform(self._server_info.platform) if self._server_info else None
+        uses_plugins = is_plugin_platform(platform)
+
         dialog = Adw.AlertDialog()
         dialog.set_heading(_("Add {} tunnel?").format(tunnel_name))
         names = ", ".join(title for _project_id, title in mods)
-        dialog.set_body(
-            _("This tunnel needs {}. Hosty can install compatible Fabric versions automatically.").format(names)
-        )
+        if uses_plugins:
+            dialog.set_body(
+                _("This tunnel needs {}. Hosty can install compatible plugin versions automatically.").format(names)
+            )
+            install_label = _("Install required plugins")
+        else:
+            dialog.set_body(
+                _("This tunnel needs {}. Hosty can install compatible mod versions automatically.").format(names)
+            )
+            install_label = _("Install Mods")
 
         dialog.add_response("cancel", _("Cancel"))
-        dialog.add_response("install", _("Install Mods"))
+        dialog.add_response("install", install_label)
 
         dialog.set_response_appearance("install", Adw.ResponseAppearance.SUGGESTED)
         dialog.set_default_response("install")
@@ -1212,7 +1308,8 @@ class PlayitMixin:
             elif tunnel_name == "Voice Chat":
                 self._voicechat_in_progress = True
             self._refresh_status_row()
-            self._toast(_("Installing {} mod support...").format(tunnel_name))
+            support_kind = _("plugin") if uses_plugins else _("mod")
+            self._toast(_("Installing {} {} support...").format(tunnel_name, support_kind))
 
             def worker():
                 warnings: list[str] = []
@@ -1239,7 +1336,7 @@ class PlayitMixin:
                         self._toast(_("Installed {}").format(", ".join(installed)))
                     if warnings:
                         warn = Adw.AlertDialog()
-                        warn.set_heading(_("Some mods were not installed"))
+                        warn.set_heading(_("Some dependencies were not installed"))
                         warn.set_body(_("{}\n\nHosty will create the tunnel anyway.").format("\n".join(warnings)))
                         warn.add_response("ok", _("OK"))
                         warn.set_default_response("ok")
@@ -1301,6 +1398,7 @@ class PlayitMixin:
                     voicechat_endpoint=str(cfg.get("voicechat_endpoint", "")).strip(),
                     bedrock_port=br_port,
                     voicechat_port=vc_port,
+                    platform=self._server_info.platform if self._server_info else None,
                 )
 
             def ui_done():

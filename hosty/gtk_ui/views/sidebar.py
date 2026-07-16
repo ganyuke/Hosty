@@ -9,6 +9,7 @@ gi.require_version("Adw", "1")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Adw, Gdk, Gio, GObject, Gtk
 
+from hosty.shared.backend.platforms import server_subtitle
 from hosty.shared.backend.server_manager import ServerInfo, ServerManager
 from hosty.shared.utils.constants import ServerStatus
 from hosty.shared.utils.image_utils import load_pixbuf
@@ -27,7 +28,7 @@ class ServerRow(Adw.ActionRow):
 
         self.set_title(server_info.name)
         self.set_subtitle(self._subtitle_text())
-        self.set_tooltip_text(server_info.mc_version)
+        self.set_tooltip_text(server_subtitle(server_info.platform, server_info.mc_version))
         self.set_activatable(True)
 
         # Server icon
@@ -48,9 +49,10 @@ class ServerRow(Adw.ActionRow):
         self.attach_existing_process()
 
     def _subtitle_text(self) -> str:
+        version_text = server_subtitle(self.server_info.platform, self.server_info.mc_version)
         if self._process and self._process.is_running:
-            return f"{self.server_info.mc_version} · {self._process.player_count}/{self._process.max_players}"
-        return self.server_info.mc_version
+            return f"{version_text} · {self._process.player_count}/{self._process.max_players}"
+        return version_text
 
     def _update_icon(self):
         """Update the avatar icon from the server's icon path."""
@@ -132,7 +134,7 @@ class ServerRow(Adw.ActionRow):
         self.server_info = server_info
         self.set_title(server_info.name)
         self.set_subtitle(self._subtitle_text())
-        self.set_tooltip_text(server_info.mc_version)
+        self.set_tooltip_text(server_subtitle(server_info.platform, server_info.mc_version))
         self._update_icon()
 
 

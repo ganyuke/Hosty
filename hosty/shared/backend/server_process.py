@@ -3,11 +3,13 @@ ServerProcess - Manage a Minecraft server subprocess.
 Handles stdin/stdout/stderr piping and lifecycle management.
 """
 
+import os
 import re
 import subprocess
 import threading
 from pathlib import Path
 
+from hosty.shared.backend.platforms import Platform, normalize_platform
 from hosty.shared.core.events import EventEmitter
 from hosty.shared.utils.constants import ServerStatus
 from hosty.shared.utils.subprocess_utils import hidden_subprocess_kwargs
@@ -19,12 +21,20 @@ class ServerProcess(EventEmitter):
     Emits signals for output and status changes.
     """
 
-    def __init__(self, server_dir: str, java_path: str, ram_mb: int = 2048, max_players: int = 20):
+    def __init__(
+        self,
+        server_dir: str,
+        java_path: str,
+        ram_mb: int = 2048,
+        max_players: int = 20,
+        platform: str | Platform = Platform.FABRIC,
+    ):
         super().__init__()
         self.server_dir = Path(server_dir)
         self.java_path = java_path
         self.ram_mb = ram_mb
         self.max_players = max(1, int(max_players))
+        self.platform = normalize_platform(platform)
         self.player_count = 0
         self._process: subprocess.Popen | None = None
         self._status = ServerStatus.STOPPED
@@ -55,28 +65,49 @@ class ServerProcess(EventEmitter):
     def is_running(self) -> bool:
         return self._status in (ServerStatus.RUNNING, ServerStatus.STARTING)
 
+    def _build_launch_command(self) -> tuple[list[str], str] | None:
+        if not self.java_path:
+            return None
+
+        java_args = [self.java_path, f"-Xmx{self.ram_mb}M", f"-Xms{self.ram_mb}M"]
+
+        if self.platform == Platform.FABRIC:
+            launch_jar = self.server_dir / "fabric-server-launch.jar"
+            if not launch_jar.exists():
+                return None
+            return java_args + ["-jar", "fabric-server-launch.jar", "nogui"], "fabric-server-launch.jar"
+
+        if self.platform == Platform.NEOFORGE:
+            run_sh = self.server_dir / "run.sh"
+            if run_sh.exists():
+                return [str(run_sh), "nogui"], "run.sh"
+
+            unix_args = next(self.server_dir.glob("*unix_args.txt"), None)
+            if unix_args:
+                return java_args + [f"@{unix_args.name}", "nogui"], unix_args.name
+
+            return None
+
+        server_jar = self.server_dir / "server.jar"
+        if not server_jar.exists():
+            return None
+        return java_args + ["-jar", "server.jar", "nogui"], "server.jar"
+
     def start(self) -> bool:
         """Start the Minecraft server."""
         if self.is_running:
             return False
 
-        launch_jar = self.server_dir / "fabric-server-launch.jar"
-        if not launch_jar.exists():
-            self._emit_output("[Hosty] Error: fabric-server-launch.jar not found\n")
+        built = self._build_launch_command()
+        if not built:
+            expected = {
+                Platform.FABRIC: "fabric-server-launch.jar",
+                Platform.NEOFORGE: "run.sh or unix_args.txt",
+            }.get(self.platform, "server.jar")
+            self._emit_output(f"[Hosty] Error: {expected} not found\n")
             return False
 
-        if not self.java_path:
-            self._emit_output("[Hosty] Error: No suitable Java runtime found\n")
-            return False
-
-        cmd = [
-            self.java_path,
-            f"-Xmx{self.ram_mb}M",
-            f"-Xms{self.ram_mb}M",
-            "-jar",
-            "fabric-server-launch.jar",
-            "nogui",
-        ]
+        cmd, launch_ref = built
 
         self.status = ServerStatus.STARTING
         self.player_count = 0
@@ -95,10 +126,12 @@ class ServerProcess(EventEmitter):
             }
             popen_kwargs.update(hidden_subprocess_kwargs())
 
+            if launch_ref == "run.sh":
+                popen_kwargs["executable"] = "/bin/bash"
+
             self._process = subprocess.Popen(cmd, **popen_kwargs)
             self._pid = self._process.pid
 
-            # Start output reader thread
             self._stdout_thread = threading.Thread(target=self._read_output, daemon=True)
             self._stdout_thread.start()
 
@@ -118,7 +151,6 @@ class ServerProcess(EventEmitter):
         self._emit_output("[Hosty] Sending stop command...\n")
         self.send_command("stop")
 
-        # Wait for graceful shutdown in background
         def _wait_stop():
             try:
                 self._process.wait(timeout=30)
@@ -151,7 +183,6 @@ class ServerProcess(EventEmitter):
         if not self._process or not self._process.stdin:
             return
 
-        # Strip leading slash if present (server console doesn't use /)
         cmd = command.strip()
         if cmd.startswith("/"):
             cmd = cmd[1:]
@@ -169,7 +200,6 @@ class ServerProcess(EventEmitter):
                 if not line:
                     break
 
-                # Detect server started
                 if self._status == ServerStatus.STARTING:
                     if "Done" in line and "For help" in line:
                         self.status = ServerStatus.RUNNING
@@ -181,7 +211,6 @@ class ServerProcess(EventEmitter):
         except Exception:
             pass
         finally:
-            # Process ended
             if self._status != ServerStatus.STOPPED:
                 self._pid = None
                 self.status = ServerStatus.STOPPED

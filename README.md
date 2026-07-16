@@ -13,14 +13,14 @@
   <a href="https://github.com/sugarycandybar/Hosty/releases"><img src="https://img.shields.io/badge/platform-Windows%20%7C%20Linux-blue?color=blue"></a>
 </p>
 
-Hosty is a desktop app for creating, running, and managing Minecraft Fabric servers with a clean, native-style UI.
+Hosty is a desktop app for creating, running, and managing Minecraft servers (Fabric, NeoForge, Spigot, Paper, Purpur) with a clean, native-style UI.
 
 It keeps the full server workflow in one app: setup, start/stop, monitoring, mod management, backups, and player access controls.
 
 ## Why Hosty?
 
 
-- Easy to use: set up and run a Fabric server without juggling scripts, terminals, or scattered tools.
+- Easy to use: set up and run a server without juggling scripts, terminals, or scattered tools.
 - Auto-downloads dependencies: Hosty fetches what your server needs, including Java when it is missing.
 - All in the app: setup, start/stop, live monitoring, mod management, backups, and access controls in one place.
 - Built for real hosting: stream logs, send commands, tweak settings, and manage worlds without leaving Hosty.

@@ -1,7 +1,7 @@
 #!/usr/bin/env @PYTHON@
 import os
-import sys
 import signal
+import sys
 from pathlib import Path
 
 # Set up data directory as the old wrapper did
@@ -26,21 +26,8 @@ pkgdatadir = '@pkgdatadir@'
 if os.path.exists(pkgdatadir):
     sys.path.insert(0, pkgdatadir)
 
-from hosty.factory import create_application
+from hosty.entry import main
 
-def main():
-    """Launch the Hosty application."""
-    try:
-        app = create_application()
-        return app.run(sys.argv)
-    except KeyboardInterrupt:
-        return 130
-    except NotImplementedError as exc:
-        print(f"Hosty startup error: {exc}", file=sys.stderr)
-        return 2
-    except Exception as exc:
-        print(f"Hosty startup error: {exc}", file=sys.stderr)
-        return 1
 
 if __name__ == "__main__":
     # Handle SIGINT (Ctrl+C) gracefully

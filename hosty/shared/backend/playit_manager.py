@@ -20,6 +20,7 @@ from pathlib import Path
 
 import requests
 
+from hosty.shared.backend.platforms import Platform, content_dir_name, is_plugin_platform, normalize_platform
 from hosty.shared.core.events import EventEmitter
 from hosty.shared.utils.constants import DATA_DIR
 from hosty.shared.utils.subprocess_utils import hidden_subprocess_kwargs
@@ -29,6 +30,14 @@ ENDPOINT_URL_RE = re.compile(r"(?:tcp|udp)://([A-Za-z0-9.-]+:\d{2,5})")
 ENDPOINT_HOSTPORT_RE = re.compile(r"(((?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,}|(?:\d{1,3}\.){3}\d{1,3}):\d{2,5})")
 SECRET_VALUE_RE = re.compile(r'(?mi)^\s*(?:secret|secret_key|key)\s*=\s*"([^"]+)"\s*$')
 VERSION_RE = re.compile(r"(\d+)\.(\d+)\.(\d+)")
+
+GEYSERMC_DOWNLOAD_URL = (
+    "https://download.geysermc.org/v2/projects/{project}/versions/latest/builds/latest/downloads/spigot"
+)
+GEYSERMC_PLUGIN_FILENAMES = {
+    "geyser": "Geyser-Spigot.jar",
+    "floodgate": "floodgate-spigot.jar",
+}
 
 
 def _split_endpoint(endpoint: str) -> tuple[str, int | None]:
@@ -1581,8 +1590,55 @@ class PlayitManager(EventEmitter):
 
         return "\n".join(out) + "\n"
 
-    def configure_geyser_mod(self, server_dir: str, bedrock_port: int = 19132) -> bool:
-        """Ensure Geyser's Fabric config listens on the Bedrock UDP port."""
+    @staticmethod
+    def _geyser_config_file(server_dir: str, platform: str | Platform | None = None) -> Path:
+        """Return the Geyser config.yml path for a server platform."""
+        plat = normalize_platform(platform)
+        root = Path(server_dir)
+        if plat == Platform.FABRIC:
+            return root / "config" / "Geyser-Fabric" / "config.yml"
+        if plat == Platform.NEOFORGE:
+            return root / "config" / "Geyser-NeoForge" / "config.yml"
+        return root / "plugins" / "Geyser-Spigot" / "config.yml"
+
+    @staticmethod
+    def server_content_dir(server_dir: str, platform: str | Platform | None = None) -> Path:
+        return Path(server_dir) / content_dir_name(platform)
+
+    def download_geyser_spigot_plugin(self, project: str, dest_dir: Path) -> tuple[bool, str, str]:
+        """Download a Geyser or Floodgate Spigot plugin jar from the GeyserMC API."""
+        project_key = str(project or "").strip().lower()
+        if project_key not in {"geyser", "floodgate"}:
+            return False, _("Unsupported GeyserMC project: {}").format(project), ""
+
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        url = GEYSERMC_DOWNLOAD_URL.format(project=project_key)
+        filename = GEYSERMC_PLUGIN_FILENAMES.get(project_key, f"{project_key}-spigot.jar")
+        dest = dest_dir / filename
+
+        try:
+            req = urllib.request.Request(url, headers={"User-Agent": "Hosty/1.0"})
+            with urllib.request.urlopen(req, timeout=120) as resp:
+                disposition = resp.headers.get("Content-Disposition", "")
+                match = re.search(r'filename="?([^";]+)"?', disposition)
+                if match:
+                    filename = Path(match.group(1)).name
+                    dest = dest_dir / filename
+                data = resp.read()
+            if len(data) < 1000:
+                return False, _("Downloaded file for {} looks invalid").format(project_key), ""
+            dest.write_bytes(data)
+            return True, _("Downloaded {}").format(filename), filename
+        except Exception as exc:
+            return False, _("Failed to download {}: {}").format(project_key, exc), ""
+
+    def configure_geyser_mod(
+        self,
+        server_dir: str,
+        bedrock_port: int = 19132,
+        platform: str | Platform | None = None,
+    ) -> bool:
+        """Ensure Geyser's config listens on the Bedrock UDP port."""
         try:
             port = int(bedrock_port)
         except Exception:
@@ -1590,22 +1646,20 @@ class PlayitManager(EventEmitter):
         if port < 1024 or port > 65535:
             port = 19132
 
-        config_dir = Path(server_dir) / "config" / "Geyser-Fabric"
-        config_file = config_dir / "config.yml"
+        config_file = self._geyser_config_file(server_dir, platform)
         try:
-            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
             content = config_file.read_text(encoding="utf-8") if config_file.exists() else ""
             config_file.write_text(self._replace_geyser_bedrock_block(content, port), encoding="utf-8")
             return True
         except Exception:
             return False
 
-    def configure_floodgate_mod(self, server_dir: str) -> bool:
+    def configure_floodgate_mod(self, server_dir: str, platform: str | Platform | None = None) -> bool:
         """Ensure Geyser is configured to use Floodgate authentication."""
-        config_dir = Path(server_dir) / "config" / "Geyser-Fabric"
-        config_file = config_dir / "config.yml"
+        config_file = self._geyser_config_file(server_dir, platform)
         try:
-            config_dir.mkdir(parents=True, exist_ok=True)
+            config_file.parent.mkdir(parents=True, exist_ok=True)
             content = config_file.read_text(encoding="utf-8") if config_file.exists() else ""
             content = self._replace_geyser_remote_auth_type(content, "floodgate")
             config_file.write_text(content, encoding="utf-8")
@@ -1706,19 +1760,21 @@ class PlayitManager(EventEmitter):
         voicechat_endpoint: str = "",
         bedrock_port: int = 19132,
         voicechat_port: int = 24454,
+        platform: str | Platform | None = None,
     ) -> dict[str, bool]:
         """Best-effort background repair for playit-backed mod config files."""
         result = {"geyser": False, "voicechat": False}
+        content_dir = self.server_content_dir(server_dir, platform)
         if str(bedrock_endpoint or "").strip():
-            result["geyser"] = self.configure_geyser_mod(server_dir, bedrock_port)
-            mods_dir = Path(server_dir) / "mods"
+            result["geyser"] = self.configure_geyser_mod(server_dir, bedrock_port, platform=platform)
             has_floodgate = False
             try:
-                has_floodgate = any("floodgate" in jar.stem.lower() for jar in mods_dir.glob("*.jar"))
+                if content_dir.is_dir():
+                    has_floodgate = any("floodgate" in jar.stem.lower() for jar in content_dir.glob("*.jar"))
             except Exception:
                 has_floodgate = False
             if has_floodgate:
-                self.configure_floodgate_mod(server_dir)
+                self.configure_floodgate_mod(server_dir, platform=platform)
         if str(voicechat_endpoint or "").strip():
             result["voicechat"] = self.configure_voicechat_mod(
                 server_dir,
@@ -1735,6 +1791,7 @@ class PlayitManager(EventEmitter):
         secret: str = "",
         bedrock_port: int = 19132,
         voicechat_port: int = 24454,
+        platform: str | Platform | None = None,
     ) -> dict[str, str]:
         """Auto-create bedrock/voicechat tunnels if mods are installed and no tunnel exists yet.
 
@@ -1748,7 +1805,7 @@ class PlayitManager(EventEmitter):
 
         result = {"bedrock_endpoint": "", "voicechat_endpoint": ""}
         cfg = load_playit_config(server_dir)
-        mods_dir = Path(server_dir) / "mods"
+        content_dir = self.server_content_dir(server_dir, platform)
         dirty = False
 
         # Refresh tunnel list and validate existing endpoints
@@ -1763,7 +1820,8 @@ class PlayitManager(EventEmitter):
         if not bedrock_ep:
             has_geyser = False
             try:
-                has_geyser = any("geyser" in jar.stem.lower() for jar in mods_dir.glob("*.jar"))
+                if content_dir.is_dir():
+                    has_geyser = any("geyser" in jar.stem.lower() for jar in content_dir.glob("*.jar"))
             except Exception:
                 pass
             if has_geyser:
@@ -1788,10 +1846,11 @@ class PlayitManager(EventEmitter):
         if not vc_ep:
             has_vc = False
             try:
-                has_vc = any(
-                    "voice-chat" in jar.stem.lower() or "simple-voice-chat" in jar.stem.lower()
-                    for jar in mods_dir.glob("*.jar")
-                )
+                if content_dir.is_dir():
+                    has_vc = any(
+                        "voice-chat" in jar.stem.lower() or "simple-voice-chat" in jar.stem.lower()
+                        for jar in content_dir.glob("*.jar")
+                    )
             except Exception:
                 pass
             if has_vc:

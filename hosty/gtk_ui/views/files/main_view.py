@@ -18,6 +18,7 @@ gi.require_version("Gdk", "4.0")
 gi.require_version("GdkPixbuf", "2.0")
 from gi.repository import Adw, GLib, Gtk
 
+from hosty.shared.backend.platforms import content_dir_name, is_mod_platform
 from hosty.shared.backend.server_manager import ServerInfo, ServerManager
 
 from .mixins import BackupsMixin, ModrinthMixin, ModsMixin, PlayersMixin, WorldsMixin
@@ -39,6 +40,7 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
 
         self._worlds_group: Adw.PreferencesGroup | None = None
         self._mods_group: Adw.PreferencesGroup | None = None
+        self._open_content_row: Adw.ActionRow | None = None
         self._check_updates_row: Adw.ActionRow | None = None
         self._mods_update_busy = False
         self._modpack_version_enrich_busy = False
@@ -111,6 +113,7 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
         open_mods_row.add_prefix(Gtk.Image.new_from_icon_name("application-x-addon-symbolic"))
         open_mods_row.set_activatable(True)
         open_mods_row.connect("activated", self._on_open_mods_folder)
+        self._open_content_row = open_mods_row
         self._mods_group.add(open_mods_row)
 
         modrinth_row = Adw.ActionRow(
@@ -130,7 +133,6 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
         self._mods_group.add(check_updates_row)
         self._check_updates_row = check_updates_row
 
-        # "Installed Mods" collapsible section (modpacks + standalone mods)
         mods_expander = Adw.ExpanderRow(title=_("Installed Mods"))
         mods_expander.set_expanded(False)
         self._mods_expander = mods_expander
@@ -154,12 +156,25 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
         scroll.set_child(page)
         return scroll
 
+    def _refresh_content_group_labels(self) -> None:
+        if not self._server_info:
+            return
+        platform = self._server_info.platform
+        content_label = _("Plugins") if not is_mod_platform(platform) else _("Mods")
+        if self._mods_group:
+            self._mods_group.set_title(content_label)
+        if self._open_content_row:
+            self._open_content_row.set_title(_("Open {} folder").format(content_label.lower()))
+        if self._mods_expander:
+            self._mods_expander.set_title(_("Installed {}").format(content_label))
+
     def set_server(self, server_info: ServerInfo, server_manager: ServerManager):
         self._pop_to_root()
         self._server_info = server_info
         self._server_manager = server_manager
         self._worlds_snapshot = tuple()
         self._disabled_snapshot = tuple()
+        self._refresh_content_group_labels()
         self._refresh_backups_row_subtitle()
         self._rebuild_lists()
 
@@ -268,35 +283,56 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
                 self._worlds_group.add(row)
                 self._world_rows.append(row)
 
-        # ---- Installed Mods expander ----
-        mods_dir = root / "mods"
-        mods_dir.mkdir(parents=True, exist_ok=True)
-        jars = sorted(mods_dir.glob("*.jar"), key=lambda p: p.name.lower())
-        entries = self._modpack_entries()
-        managed_set = set(self._modpack_managed_mod_map().keys())
+        # ---- Installed mods/plugins expander ----
+        content_dir = root / content_dir_name(self._server_info.platform if self._server_info else "fabric")
+        content_dir.mkdir(parents=True, exist_ok=True)
+        jars = sorted(content_dir.glob("*.jar"), key=lambda p: p.name.lower())
+        entries = self._modpack_entries() if self._is_mod_server() else {}
+        managed_set = set(self._modpack_managed_mod_map().keys()) if self._is_mod_server() else set()
+        plugin_state = self._read_plugin_state().get("plugins", {}) if self._is_plugin_server() else {}
 
         if self._mods_expander:
-            for project_id, entry in sorted(
-                entries.items(),
-                key=lambda item: (str(item[1].get("title", "")).strip() or item[0]).lower(),
-            ):
-                row = self._make_modpack_row(project_id, entry)
-                self._mods_expander.add_row(row)
-                self._mod_rows.append(row)
+            if self._is_mod_server():
+                for project_id, entry in sorted(
+                    entries.items(),
+                    key=lambda item: (str(item[1].get("title", "")).strip() or item[0]).lower(),
+                ):
+                    row = self._make_modpack_row(project_id, entry)
+                    self._mods_expander.add_row(row)
+                    self._mod_rows.append(row)
 
-            standalone_jars = [jar for jar in jars if jar.name.lower() not in managed_set]
+                standalone_jars = [jar for jar in jars if jar.name.lower() not in managed_set]
 
-            for jar in standalone_jars:
-                row = self._make_mod_row(jar)
-                self._mods_expander.add_row(row)
-                self._mod_rows.append(row)
+                for jar in standalone_jars:
+                    row = self._make_mod_row(jar)
+                    self._mods_expander.add_row(row)
+                    self._mod_rows.append(row)
+            else:
+                tracked_filenames = {str(m.get("filename", "")).strip().lower() for m in plugin_state.values()}
+                for project_id, meta in sorted(
+                    plugin_state.items(),
+                    key=lambda item: (str(item[1].get("title", "")).strip() or item[0]).lower(),
+                ):
+                    row = self._make_mod_row(content_dir / str(meta.get("filename", "")))
+                    self._mods_expander.add_row(row)
+                    self._mod_rows.append(row)
+                for jar in jars:
+                    if jar.name.lower() in tracked_filenames:
+                        continue
+                    row = self._make_mod_row(jar)
+                    self._mods_expander.add_row(row)
+                    self._mod_rows.append(row)
 
             if not self._mod_rows:
-                info = self._add_info_row_to_expander(self._mods_expander, _("No mods installed"))
+                empty_label = _("No mods installed") if self._is_mod_server() else _("No plugins installed")
+                info = self._add_info_row_to_expander(self._mods_expander, empty_label)
                 self._mod_rows.append(info)
 
-            # Update expander subtitle with count
-            total_mods = len(entries) + len([j for j in jars if j.name.lower() not in managed_set])
+            total_mods = (
+                (len(entries) + len([j for j in jars if j.name.lower() not in managed_set]))
+                if self._is_mod_server()
+                else len(plugin_state) + len([j for j in jars if j.name.lower() not in {str(m.get('filename','')).lower() for m in plugin_state.values()}])
+            )
             self._mods_expander.set_subtitle(_("{} item(s)").format(total_mods) if total_mods else _("None installed"))
 
         # ---- Installed Datapacks expander ----
@@ -498,11 +534,9 @@ class FilesView(Gtk.Box, BackupsMixin, ModsMixin, PlayersMixin, ModrinthMixin, W
             self._open_target(root)
 
     def _on_open_mods_folder(self, *_):
-        root = self._server_dir()
-        if root:
-            d = root / "mods"
-            d.mkdir(parents=True, exist_ok=True)
-            self._open_target(d)
+        content_dir = self._content_dir()
+        if content_dir:
+            self._open_target(content_dir)
 
     def _open_target(self, path: Path):
         if not _open_path(path):
